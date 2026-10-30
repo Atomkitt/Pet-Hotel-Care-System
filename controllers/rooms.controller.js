@@ -1,7 +1,7 @@
 // controllers/rooms.controller.js
 const pool = require('../db');
 const { emitEvent } = require('../socket');
-const { sendServerError, parseBookingDateRange } = require('../middleware/security');
+const { sendServerError, parseBookingDateRange, computePeakConcurrentPets } = require('../middleware/security');
 
 const VALID_ROOM_STATUSES = ['Available', 'Occupied', 'Maintenance'];
 
@@ -14,11 +14,42 @@ async function getAllRooms(req, res) {
 
     const isStaffOrDev = req.user.role === 'Admin' || req.user.role === 'Developer';
 
-    // Privacy guard: Only expose active guest / pet / vaccine details to Staff (Admin) and Developers
+    // Privacy guard: Customers never see other guests' names, pets, or vaccine details.
+    // We only compute the requesting customer's OWN booked pet count per room (if check_in & check_out provided).
     if (!isStaffOrDev) {
+      const myPetsByRoom = new Map();
+      const { check_in, check_out } = req.query || {};
+      if (check_in && check_out) {
+        const parsed = parseBookingDateRange(check_in, check_out, { rejectPast: false });
+        if (parsed.ok) {
+          const [myStays] = await pool.execute(
+            `SELECT b.booking_id, b.room_id, b.check_in_date, b.check_out_date,
+                    COUNT(bp.pet_id) AS pet_count
+             FROM bookings b
+             LEFT JOIN booking_pets bp ON b.booking_id = bp.booking_id
+             WHERE b.user_id = ?
+               AND b.booking_status IN (?, ?)
+               AND b.check_in_date < ?
+               AND b.check_out_date > ?
+             GROUP BY b.booking_id`,
+            [req.user.user_id, 'Pending', 'Confirmed', parsed.checkOutDt, parsed.checkInDt]
+          );
+
+          const groupedByRoom = new Map();
+          for (const row of myStays) {
+            if (!groupedByRoom.has(row.room_id)) groupedByRoom.set(row.room_id, []);
+            groupedByRoom.get(row.room_id).push(row);
+          }
+          for (const [rId, list] of groupedByRoom.entries()) {
+            myPetsByRoom.set(rId, computePeakConcurrentPets(list, parsed.checkInDt, parsed.checkOutDt));
+          }
+        }
+      }
+
       return res.json(
         rooms.map((room) => ({
           ...room,
+          my_occupied_pets: myPetsByRoom.get(room.room_id) || 0,
           active_stay: null
         }))
       );
@@ -26,7 +57,7 @@ async function getAllRooms(req, res) {
 
     // Prioritize stays actively covering NOW() before upcoming Confirmed reservations
     const [activeStays] = await pool.execute(
-      `SELECT b.booking_id, b.room_id, b.check_in_date, b.check_out_date, b.booking_status,
+      `SELECT b.booking_id, b.user_id, b.room_id, b.check_in_date, b.check_out_date, b.booking_status,
               u.name AS owner_name, p.pet_id, p.name AS pet_name, p.species, p.breed,
               p.weight_kg, p.behavior_status, p.photo_url, p.vaccine_card_url
        FROM bookings b
@@ -44,35 +75,70 @@ async function getAllRooms(req, res) {
       if (!stayByRoom.has(row.room_id)) {
         stayByRoom.set(row.room_id, {
           booking_id: row.booking_id,
+          booking_ids: [row.booking_id],
+          user_id: row.user_id,
           check_in_date: row.check_in_date,
           check_out_date: row.check_out_date,
           owner_name: row.owner_name,
           pets: [],
+          seen_pet_ids: new Set(),
           has_aggressive_pet: false
         });
       }
+
       const entry = stayByRoom.get(row.room_id);
-      if (entry.booking_id === row.booking_id) {
-        entry.pets.push({
-          pet_id: row.pet_id,
-          name: row.pet_name,
-          species: row.species,
-          breed: row.breed,
-          weight_kg: row.weight_kg,
-          behavior_status: row.behavior_status,
-          photo_url: row.photo_url,
-          vaccine_card_url: row.vaccine_card_url ? `/api/pets/${row.pet_id}/vaccine-card` : null
-        });
-        if (row.behavior_status === 'Aggressive') {
-          entry.has_aggressive_pet = true;
+      const overlapsPrimaryWindow =
+        new Date(row.check_in_date) < new Date(entry.check_out_date) &&
+        new Date(row.check_out_date) > new Date(entry.check_in_date);
+
+      // Combine same-owner add-on Confirmed bookings sharing this active room stay window
+      if (entry.booking_id === row.booking_id || (entry.user_id === row.user_id && overlapsPrimaryWindow)) {
+        if (!entry.booking_ids.includes(row.booking_id)) {
+          entry.booking_ids.push(row.booking_id);
+        }
+        if (new Date(row.check_out_date) > new Date(entry.check_out_date)) {
+          entry.check_out_date = row.check_out_date;
+        }
+        if (!entry.seen_pet_ids.has(row.pet_id)) {
+          entry.seen_pet_ids.add(row.pet_id);
+          entry.pets.push({
+            pet_id: row.pet_id,
+            name: row.pet_name,
+            species: row.species,
+            breed: row.breed,
+            weight_kg: row.weight_kg,
+            behavior_status: row.behavior_status,
+            photo_url: row.photo_url,
+            vaccine_card_url: row.vaccine_card_url ? `/api/pets/${row.pet_id}/vaccine-card` : null
+          });
+          if (row.behavior_status === 'Aggressive') {
+            entry.has_aggressive_pet = true;
+          }
         }
       }
     }
 
-    const enriched = rooms.map((room) => ({
-      ...room,
-      active_stay: stayByRoom.get(room.room_id) || null
-    }));
+    const enriched = rooms.map((room) => {
+      const rawStay = stayByRoom.get(room.room_id) || null;
+      let cleanStay = null;
+      let occupiedPets = 0;
+
+      if (rawStay) {
+        const { seen_pet_ids, ...rest } = rawStay;
+        cleanStay = rest;
+        occupiedPets = cleanStay.pets.length;
+      }
+
+      const maxCap = Number(room.max_capacity);
+      const remainingCapacity = room.status === 'Maintenance' ? 0 : Math.max(0, maxCap - occupiedPets);
+
+      return {
+        ...room,
+        occupied_pets: occupiedPets,
+        remaining_capacity: remainingCapacity,
+        active_stay: cleanStay
+      };
+    });
 
     return res.json(enriched);
   } catch (err) {
@@ -91,12 +157,53 @@ async function getAvailableRooms(req, res) {
         return res.status(400).json({ error: parsedRange.error });
       }
 
-      const [rows] = await pool.execute(
-        'SELECT r.room_id, r.room_number, r.room_type, r.max_capacity, r.base_price_per_night, r.status FROM rooms r WHERE r.status != ? AND NOT EXISTS (SELECT 1 FROM bookings b WHERE b.room_id = r.room_id AND b.booking_status IN (?, ?) AND b.check_in_date < ? AND b.check_out_date > ?) ORDER BY r.room_number ASC',
-        ['Maintenance', 'Pending', 'Confirmed', parsedRange.checkOutDt, parsedRange.checkInDt]
+      const [rooms] = await pool.execute(
+        'SELECT room_id, room_number, room_type, max_capacity, base_price_per_night, status FROM rooms WHERE status != ? ORDER BY room_number ASC',
+        ['Maintenance']
       );
 
-      return res.json(rows);
+      const [overlappingStays] = await pool.execute(
+        `SELECT b.booking_id, b.user_id, b.room_id, b.check_in_date, b.check_out_date,
+                COUNT(bp.pet_id) AS pet_count
+         FROM bookings b
+         LEFT JOIN booking_pets bp ON b.booking_id = bp.booking_id
+         WHERE b.booking_status IN (?, ?)
+           AND b.check_in_date < ?
+           AND b.check_out_date > ?
+         GROUP BY b.booking_id`,
+        ['Pending', 'Confirmed', parsedRange.checkOutDt, parsedRange.checkInDt]
+      );
+
+      const staysByRoom = new Map();
+      for (const stay of overlappingStays) {
+        if (!staysByRoom.has(stay.room_id)) staysByRoom.set(stay.room_id, []);
+        staysByRoom.get(stay.room_id).push(stay);
+      }
+
+      const availableRooms = [];
+      for (const room of rooms) {
+        const roomStays = staysByRoom.get(room.room_id) || [];
+        // Option 2 (Private Per Owner): Block if another guest already holds this room during these dates
+        const heldByAnotherOwner = roomStays.some((s) => s.user_id !== req.user.user_id);
+        if (heldByAnotherOwner) {
+          continue;
+        }
+
+        const occupiedPets = computePeakConcurrentPets(roomStays, parsedRange.checkInDt, parsedRange.checkOutDt);
+        const maxCap = Number(room.max_capacity);
+        const remainingCapacity = Math.max(0, maxCap - occupiedPets);
+
+        if (remainingCapacity > 0) {
+          availableRooms.push({
+            ...room,
+            occupied_pets: occupiedPets,
+            remaining_capacity: remainingCapacity,
+            is_owner_addon: occupiedPets > 0
+          });
+        }
+      }
+
+      return res.json(availableRooms);
     }
 
     const [rows] = await pool.execute(
@@ -104,7 +211,14 @@ async function getAvailableRooms(req, res) {
       ['Available']
     );
 
-    return res.json(rows);
+    return res.json(
+      rows.map((r) => ({
+        ...r,
+        occupied_pets: 0,
+        remaining_capacity: Number(r.max_capacity),
+        is_owner_addon: false
+      }))
+    );
   } catch (err) {
     return sendServerError(res, 'rooms.getAvailableRooms Error', 'Failed to retrieve available rooms', err);
   }

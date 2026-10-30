@@ -2,7 +2,7 @@
 const pool = require('../db');
 const { emitEvent } = require('../socket');
 const { removePrivateSlipFile } = require('../middleware/upload');
-const { sendServerError, parseBookingDateRange } = require('../middleware/security');
+const { sendServerError, parseBookingDateRange, computePeakConcurrentPets } = require('../middleware/security');
 
 const VALID_BOOKING_STATUSES = ['Pending', 'Confirmed', 'Completed', 'Cancelled'];
 
@@ -11,6 +11,75 @@ function calculateGroomingFeeForWeight(weightKg) {
   if (w < 8) return 500;
   if (w <= 20) return 800;
   return 1200;
+}
+
+function computeStayNights(checkInVal, checkOutVal) {
+  const dIn = new Date(checkInVal);
+  const dOut = new Date(checkOutVal);
+  const utcIn = Date.UTC(dIn.getFullYear(), dIn.getMonth(), dIn.getDate());
+  const utcOut = Date.UTC(dOut.getFullYear(), dOut.getMonth(), dOut.getDate());
+  return Math.max(1, Math.round((utcOut - utcIn) / 86400000));
+}
+
+/**
+ * If a primary Pending booking is cancelled or deleted while the same owner still has
+ * later Pending add-on bookings on overlapping dates in the same room, promote/recalculate
+ * those Pending bookings so pricing stays accurate.
+ */
+async function rebalanceDependentPendingAddons(conn, roomId, userId, checkInDate, checkOutDate) {
+  const [pendingRows] = await conn.execute(
+    `SELECT b.booking_id, b.check_in_date, b.check_out_date, r.base_price_per_night
+     FROM bookings b
+     JOIN rooms r ON b.room_id = r.room_id
+     WHERE b.room_id = ?
+       AND b.user_id = ?
+       AND b.booking_status = ?
+       AND b.check_in_date < ?
+       AND b.check_out_date > ?
+     ORDER BY b.booking_id ASC
+     FOR UPDATE`,
+    [roomId, userId, 'Pending', checkOutDate, checkInDate]
+  );
+
+  for (const row of pendingRows) {
+    const [priorRows] = await conn.execute(
+      `SELECT COUNT(*) AS cnt
+       FROM bookings
+       WHERE room_id = ?
+         AND user_id = ?
+         AND booking_id < ?
+         AND booking_status IN (?, ?, ?)
+         AND check_in_date < ?
+         AND check_out_date > ?`,
+      [roomId, userId, row.booking_id, 'Pending', 'Confirmed', 'Completed', row.check_out_date, row.check_in_date]
+    );
+
+    const hasPrior = Number(priorRows[0]?.cnt || 0) > 0;
+    const [bPets] = await conn.execute(
+      `SELECT bp.has_grooming, p.weight_kg
+       FROM booking_pets bp
+       JOIN pets p ON bp.pet_id = p.pet_id
+       WHERE bp.booking_id = ?`,
+      [row.booking_id]
+    );
+
+    const nights = computeStayNights(row.check_in_date, row.check_out_date);
+    const petCount = bPets.length;
+    const groomingSum = bPets.reduce(
+      (sum, p) => sum + (p.has_grooming ? calculateGroomingFeeForWeight(p.weight_kg) : 0),
+      0
+    );
+
+    const lodging = hasPrior ? 0 : nights * Number(row.base_price_per_night);
+    const surcharge = hasPrior
+      ? petCount * 300 * nights
+      : petCount > 1
+        ? (petCount - 1) * 300 * nights
+        : 0;
+
+    const newTotal = lodging + surcharge + groomingSum;
+    await conn.execute('UPDATE bookings SET total_price = ? WHERE booking_id = ?', [newTotal, row.booking_id]);
+  }
 }
 
 function formatBookingRow(booking) {
@@ -106,23 +175,56 @@ async function createBooking(req, res) {
       return res.status(409).json({ error: `Room ${room.room_number} is currently under maintenance.` });
     }
 
-    if (uniquePetIds.length > Number(room.max_capacity)) {
+    const maxRoomCapacity = Number(room.max_capacity);
+    if (uniquePetIds.length > maxRoomCapacity) {
       await conn.rollback();
       return res.status(400).json({
-        error: `Room ${room.room_number} (${room.room_type}) has a maximum capacity of ${room.max_capacity} pet(s), but ${uniquePetIds.length} were selected.`
+        error: `Room ${room.room_number} (${room.room_type}) has a maximum capacity of ${maxRoomCapacity} pet(s), but ${uniquePetIds.length} were selected.`
       });
     }
 
-    // 2. Check room date collision against Pending or Confirmed bookings
-    const [roomConflicts] = await conn.execute(
-      'SELECT booking_id FROM bookings WHERE room_id = ? AND booking_status IN (?, ?) AND check_in_date < ? AND check_out_date > ? FOR UPDATE',
+    // 2. Check room date overlaps (Option 2: Private Per Owner + Remaining Pet Slot Check)
+    const [overlappingBookings] = await conn.execute(
+      'SELECT booking_id, user_id, check_in_date, check_out_date FROM bookings WHERE room_id = ? AND booking_status IN (?, ?) AND check_in_date < ? AND check_out_date > ? FOR UPDATE',
       [room.room_id, 'Pending', 'Confirmed', checkOutDt, checkInDt]
     );
 
-    if (roomConflicts.length > 0) {
+    const otherOwnerConflict = overlappingBookings.find((b) => b.user_id !== req.user.user_id);
+    if (otherOwnerConflict) {
       await conn.rollback();
       return res.status(409).json({
-        error: `Room ${room.room_number} is already reserved for the selected dates.`
+        error: `Room ${room.room_number} is already reserved by another guest for the selected dates.`
+      });
+    }
+
+    let peakExistingPets = 0;
+    if (overlappingBookings.length > 0) {
+      const overlapIds = overlappingBookings.map((b) => b.booking_id);
+      const overlapPlaceholders = overlapIds.map(() => '?').join(', ');
+      const [countRows] = await conn.execute(
+        `SELECT booking_id, COUNT(pet_id) AS pet_count FROM booking_pets WHERE booking_id IN (${overlapPlaceholders}) GROUP BY booking_id`,
+        overlapIds
+      );
+      const countMap = new Map(countRows.map((r) => [r.booking_id, Number(r.pet_count)]));
+      const intervalsWithCounts = overlappingBookings.map((b) => ({
+        ...b,
+        pet_count: countMap.get(b.booking_id) || 0
+      }));
+      peakExistingPets = computePeakConcurrentPets(intervalsWithCounts, checkInDt, checkOutDt);
+    }
+
+    const remainingCapacity = Math.max(0, maxRoomCapacity - peakExistingPets);
+    if (remainingCapacity === 0) {
+      await conn.rollback();
+      return res.status(409).json({
+        error: `Room ${room.room_number} is already at full capacity (${maxRoomCapacity}/${maxRoomCapacity} pets) for the selected dates.`
+      });
+    }
+
+    if (uniquePetIds.length > remainingCapacity) {
+      await conn.rollback();
+      return res.status(400).json({
+        error: `Room ${room.room_number} has ${remainingCapacity} remaining pet slot(s) out of ${maxRoomCapacity} for the selected dates, but ${uniquePetIds.length} pet(s) were selected.`
       });
     }
 
@@ -145,7 +247,7 @@ async function createBooking(req, res) {
       }
     }
 
-    // 4. Prevent double-booking the same pet across overlapping dates in another room
+    // 4. Prevent double-booking the same pet across overlapping dates in another or same room
     const [petConflicts] = await conn.execute(
       `SELECT p.name AS pet_name, b.booking_id, r.room_number
        FROM booking_pets bp
@@ -169,8 +271,25 @@ async function createBooking(req, res) {
       });
     }
 
-    const lodgingCharge = nights * Number(room.base_price_per_night);
-    const multiPetSurcharge = petRows.length > 1 ? (petRows.length - 1) * 300 * nights : 0;
+    // Check if this owner already has an active/completed stay covering overlapping dates in this room
+    const [priorOwnerRows] = await conn.execute(
+      `SELECT COUNT(*) AS cnt
+       FROM bookings
+       WHERE room_id = ?
+         AND user_id = ?
+         AND booking_status IN (?, ?, ?)
+         AND check_in_date < ?
+         AND check_out_date > ?`,
+      [room.room_id, req.user.user_id, 'Pending', 'Confirmed', 'Completed', checkOutDt, checkInDt]
+    );
+    const isOwnerAddon = Number(priorOwnerRows[0]?.cnt || 0) > 0;
+
+    const lodgingCharge = isOwnerAddon ? 0 : nights * Number(room.base_price_per_night);
+    const multiPetSurcharge = isOwnerAddon
+      ? petRows.length * 300 * nights
+      : petRows.length > 1
+        ? (petRows.length - 1) * 300 * nights
+        : 0;
     const groomingFlag = Boolean(has_grooming);
     let groomingTotal = 0;
 
@@ -343,12 +462,12 @@ async function updateBookingStatus(req, res) {
     }
 
     const [roomLockRows] = await conn.execute(
-      'SELECT room_id, room_number, status FROM rooms WHERE room_id = ? FOR UPDATE',
+      'SELECT room_id, room_number, max_capacity, status FROM rooms WHERE room_id = ? FOR UPDATE',
       [booking.room_id]
     );
     const roomBefore = roomLockRows[0];
 
-    // Prevent collisions or checking into a Maintenance room when confirming
+    // Prevent cross-owner collisions, exceeding max_capacity, or checking into a Maintenance room
     if (status === 'Confirmed' && booking.booking_status !== 'Confirmed') {
       if (roomBefore && roomBefore.status === 'Maintenance') {
         await conn.rollback();
@@ -358,14 +477,45 @@ async function updateBookingStatus(req, res) {
       }
 
       const [overlappingRoomStays] = await conn.execute(
-        'SELECT booking_id FROM bookings WHERE room_id = ? AND booking_id != ? AND booking_status = ? AND check_in_date < ? AND check_out_date > ? LIMIT 1 FOR UPDATE',
+        'SELECT booking_id, user_id, check_in_date, check_out_date FROM bookings WHERE room_id = ? AND booking_id != ? AND booking_status = ? AND check_in_date < ? AND check_out_date > ? FOR UPDATE',
         [booking.room_id, bookingId, 'Confirmed', booking.check_out_date, booking.check_in_date]
       );
 
-      if (overlappingRoomStays.length > 0) {
+      const otherGuestStay = overlappingRoomStays.find((s) => s.user_id !== booking.user_id);
+      if (otherGuestStay) {
         await conn.rollback();
         return res.status(409).json({
-          error: `Room #${roomBefore.room_number} already has an overlapping Checked-In booking (#${overlappingRoomStays[0].booking_id}).`
+          error: `Room #${roomBefore.room_number} already has an overlapping Checked-In stay from another guest (#${otherGuestStay.booking_id}).`
+        });
+      }
+
+      const [thisBookingPetCountRows] = await conn.execute(
+        'SELECT COUNT(pet_id) AS cnt FROM booking_pets WHERE booking_id = ?',
+        [bookingId]
+      );
+      const thisPetCount = Number(thisBookingPetCountRows[0]?.cnt || 0);
+
+      let peakConfirmedPets = 0;
+      if (overlappingRoomStays.length > 0) {
+        const stayIds = overlappingRoomStays.map((s) => s.booking_id);
+        const stayPlaceholders = stayIds.map(() => '?').join(', ');
+        const [stayCountRows] = await conn.execute(
+          `SELECT booking_id, COUNT(pet_id) AS pet_count FROM booking_pets WHERE booking_id IN (${stayPlaceholders}) GROUP BY booking_id`,
+          stayIds
+        );
+        const stayCountMap = new Map(stayCountRows.map((r) => [r.booking_id, Number(r.pet_count)]));
+        const intervals = overlappingRoomStays.map((s) => ({
+          ...s,
+          pet_count: stayCountMap.get(s.booking_id) || 0
+        }));
+        peakConfirmedPets = computePeakConcurrentPets(intervals, booking.check_in_date, booking.check_out_date);
+      }
+
+      const maxCap = Number(roomBefore.max_capacity);
+      if (peakConfirmedPets + thisPetCount > maxCap) {
+        await conn.rollback();
+        return res.status(409).json({
+          error: `Cannot check in: Room #${roomBefore.room_number} max capacity is ${maxCap} pet(s), and ${peakConfirmedPets} pet(s) are already checked in during these dates.`
         });
       }
     }
@@ -380,6 +530,15 @@ async function updateBookingStatus(req, res) {
         'UPDATE bookings SET booking_status = ? WHERE booking_id = ?',
         [status, bookingId]
       );
+      if (status === 'Cancelled') {
+        await rebalanceDependentPendingAddons(
+          conn,
+          booking.room_id,
+          booking.user_id,
+          booking.check_in_date,
+          booking.check_out_date
+        );
+      }
     }
 
     const [roomRows] = await conn.execute(
@@ -425,39 +584,53 @@ async function updateBookingStatus(req, res) {
 
 // DELETE /api/bookings/:id
 async function deleteBooking(req, res) {
-  try {
-    const bookingId = Number(req.params.id);
-    if (Number.isNaN(bookingId) || bookingId <= 0) {
-      return res.status(400).json({ error: 'Invalid booking ID.' });
-    }
+  const bookingId = Number(req.params.id);
+  if (Number.isNaN(bookingId) || bookingId <= 0) {
+    return res.status(400).json({ error: 'Invalid booking ID.' });
+  }
 
-    const [existingRows] = await pool.execute(
-      'SELECT booking_id, user_id, room_id, booking_status, payment_slip_url FROM bookings WHERE booking_id = ?',
+  const conn = await pool.getConnection();
+  try {
+    await conn.beginTransaction();
+
+    const [existingRows] = await conn.execute(
+      'SELECT booking_id, user_id, room_id, check_in_date, check_out_date, booking_status, payment_slip_url FROM bookings WHERE booking_id = ? FOR UPDATE',
       [bookingId]
     );
 
     if (existingRows.length === 0) {
+      await conn.rollback();
       return res.status(404).json({ error: 'Booking not found.' });
     }
 
     const booking = existingRows[0];
     if (req.user.role === 'User') {
       if (booking.user_id !== req.user.user_id) {
+        await conn.rollback();
         return res.status(403).json({ error: 'Forbidden: You can only cancel your own reservations.' });
       }
       if (booking.booking_status !== 'Pending') {
+        await conn.rollback();
         return res.status(400).json({ error: 'Only Pending reservations can be deleted directly.' });
       }
     } else if (booking.booking_status === 'Confirmed') {
+      await conn.rollback();
       return res.status(400).json({
         error: 'Cannot delete an active Checked-In stay directly. Please Cancel or Checkout the booking first so room status stays synchronized.'
       });
     }
 
-    await pool.execute(
-      'DELETE FROM bookings WHERE booking_id = ?',
-      [bookingId]
+    await conn.execute('DELETE FROM bookings WHERE booking_id = ?', [bookingId]);
+
+    await rebalanceDependentPendingAddons(
+      conn,
+      booking.room_id,
+      booking.user_id,
+      booking.check_in_date,
+      booking.check_out_date
     );
+
+    await conn.commit();
 
     if (booking.payment_slip_url) {
       removePrivateSlipFile(booking.payment_slip_url);
@@ -470,7 +643,10 @@ async function deleteBooking(req, res) {
 
     return res.json({ message: `Reservation #${bookingId} removed.` });
   } catch (err) {
+    await conn.rollback();
     return sendServerError(res, 'bookings.deleteBooking Error', 'Failed to delete booking', err);
+  } finally {
+    conn.release();
   }
 }
 
@@ -511,24 +687,36 @@ async function previewCheckoutInvoice(req, res) {
       [bookingId]
     );
 
-    const dIn = new Date(b.check_in_date);
-    const dOut = new Date(b.check_out_date);
-    const utcIn = Date.UTC(dIn.getFullYear(), dIn.getMonth(), dIn.getDate());
-    const utcOut = Date.UTC(dOut.getFullYear(), dOut.getMonth(), dOut.getDate());
-    const stayNights = Math.max(1, Math.round((utcOut - utcIn) / 86400000));
+    const [priorOwnerRows] = await pool.execute(
+      `SELECT COUNT(*) AS cnt
+       FROM bookings
+       WHERE room_id = ?
+         AND user_id = ?
+         AND booking_id < ?
+         AND booking_status IN (?, ?, ?)
+         AND check_in_date < ?
+         AND check_out_date > ?`,
+      [b.room_id, b.user_id, bookingId, 'Pending', 'Confirmed', 'Completed', b.check_out_date, b.check_in_date]
+    );
+    const isOwnerAddon = Number(priorOwnerRows[0]?.cnt || 0) > 0;
 
+    const stayNights = computeStayNights(b.check_in_date, b.check_out_date);
     const petCount = petRows.length;
     const guestPets = petCount > 0 ? petRows.map((p) => p.name).join(' & ') : 'N/A';
-    const multiPetSurcharge = petCount > 1 ? (petCount - 1) * 300 * stayNights : 0;
+    const multiPetSurcharge = isOwnerAddon
+      ? petCount * 300 * stayNights
+      : petCount > 1
+        ? (petCount - 1) * 300 * stayNights
+        : 0;
 
     let groomingFee = 0;
-    let lodgingCharge = stayNights * Number(b.base_price_per_night);
+    let lodgingCharge = isOwnerAddon ? 0 : stayNights * Number(b.base_price_per_night);
     let totalPrice = 0;
 
     if (b.booking_status === 'Completed') {
       groomingFee = petRows.reduce((sum, p) => sum + Number(p.extra_charge || 0), 0);
       totalPrice = Number(b.total_price);
-      lodgingCharge = Math.max(0, totalPrice - multiPetSurcharge - groomingFee);
+      lodgingCharge = isOwnerAddon ? 0 : Math.max(0, totalPrice - multiPetSurcharge - groomingFee);
     } else {
       groomingFee = petRows.reduce(
         (sum, p) => sum + (p.has_grooming ? calculateGroomingFeeForWeight(p.weight_kg) : 0),

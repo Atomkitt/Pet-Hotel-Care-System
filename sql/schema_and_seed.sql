@@ -122,32 +122,45 @@ CREATE TRIGGER trg_after_booking_status_change
 AFTER UPDATE ON bookings
 FOR EACH ROW
 BEGIN
-  DECLARE v_other_confirmed INT DEFAULT 0;
+  DECLARE v_target_room_id INT DEFAULT 0;
+  DECLARE v_max_capacity INT DEFAULT 1;
+  DECLARE v_peak_confirmed_pets INT DEFAULT 0;
 
-  IF NEW.booking_status = 'Confirmed' THEN
+  SET v_target_room_id = NEW.room_id;
+
+  SELECT max_capacity
+  INTO v_max_capacity
+  FROM rooms
+  WHERE room_id = v_target_room_id;
+
+  SELECT COALESCE(MAX(stay_peaks.concurrent_pets), 0)
+  INTO v_peak_confirmed_pets
+  FROM (
+    SELECT b1.booking_id, COUNT(bp2.pet_id) AS concurrent_pets
+    FROM bookings b1
+    JOIN bookings b2
+      ON b2.room_id = b1.room_id
+     AND b2.booking_status = 'Confirmed'
+     AND b2.check_in_date <= b1.check_in_date
+     AND b2.check_out_date > b1.check_in_date
+    JOIN booking_pets bp2
+      ON bp2.booking_id = b2.booking_id
+    WHERE b1.room_id = v_target_room_id
+      AND b1.booking_status = 'Confirmed'
+    GROUP BY b1.booking_id
+  ) AS stay_peaks;
+
+  IF v_peak_confirmed_pets >= v_max_capacity THEN
     UPDATE rooms
     SET status = 'Occupied'
-    WHERE room_id = NEW.room_id
+    WHERE room_id = v_target_room_id
       AND status != 'Maintenance';
-  ELSEIF NEW.booking_status IN ('Completed', 'Cancelled') THEN
-    SELECT COUNT(*)
-    INTO v_other_confirmed
-    FROM bookings
-    WHERE room_id = NEW.room_id
-      AND booking_status = 'Confirmed'
-      AND booking_id != NEW.booking_id;
-
-    IF v_other_confirmed = 0 THEN
-      IF OLD.booking_status = 'Confirmed' THEN
-        UPDATE rooms
-        SET status = 'Available'
-        WHERE room_id = NEW.room_id;
-      ELSE
-        UPDATE rooms
-        SET status = 'Available'
-        WHERE room_id = NEW.room_id
-          AND status != 'Maintenance';
-      END IF;
+  ELSE
+    IF OLD.booking_status = 'Confirmed' OR NEW.booking_status IN ('Confirmed', 'Completed', 'Cancelled') THEN
+      UPDATE rooms
+      SET status = 'Available'
+      WHERE room_id = v_target_room_id
+        AND status != 'Maintenance';
     END IF;
   END IF;
 END$$
@@ -156,25 +169,47 @@ CREATE TRIGGER trg_after_booking_delete
 AFTER DELETE ON bookings
 FOR EACH ROW
 BEGIN
-  DECLARE v_remaining_confirmed INT DEFAULT 0;
+  DECLARE v_target_room_id INT DEFAULT 0;
+  DECLARE v_max_capacity INT DEFAULT 1;
+  DECLARE v_peak_confirmed_pets INT DEFAULT 0;
 
   IF OLD.booking_status = 'Confirmed' THEN
-    SELECT COUNT(*)
-    INTO v_remaining_confirmed
-    FROM bookings
-    WHERE room_id = OLD.room_id
-      AND booking_status = 'Confirmed';
+    SET v_target_room_id = OLD.room_id;
 
-    IF v_remaining_confirmed = 0 THEN
+    SELECT max_capacity
+    INTO v_max_capacity
+    FROM rooms
+    WHERE room_id = v_target_room_id;
+
+    SELECT COALESCE(MAX(stay_peaks.concurrent_pets), 0)
+    INTO v_peak_confirmed_pets
+    FROM (
+      SELECT b1.booking_id, COUNT(bp2.pet_id) AS concurrent_pets
+      FROM bookings b1
+      JOIN bookings b2
+        ON b2.room_id = b1.room_id
+       AND b2.booking_status = 'Confirmed'
+       AND b2.check_in_date <= b1.check_in_date
+       AND b2.check_out_date > b1.check_in_date
+      JOIN booking_pets bp2
+        ON bp2.booking_id = b2.booking_id
+      WHERE b1.room_id = v_target_room_id
+        AND b1.booking_status = 'Confirmed'
+      GROUP BY b1.booking_id
+    ) AS stay_peaks;
+
+    IF v_peak_confirmed_pets < v_max_capacity THEN
       UPDATE rooms
       SET status = 'Available'
-      WHERE room_id = OLD.room_id;
+      WHERE room_id = v_target_room_id
+        AND status != 'Maintenance';
     END IF;
   END IF;
 END$$
 
 CREATE PROCEDURE sp_finalize_and_calculate_bill(IN p_booking_id INT)
 BEGIN
+  DECLARE v_user_id INT DEFAULT NULL;
   DECLARE v_room_id INT DEFAULT NULL;
   DECLARE v_room_number VARCHAR(10) DEFAULT '';
   DECLARE v_room_type VARCHAR(20) DEFAULT '';
@@ -185,14 +220,15 @@ BEGIN
   DECLARE v_saved_total DECIMAL(10,2) DEFAULT 0.00;
   DECLARE v_nights INT DEFAULT 1;
   DECLARE v_pet_count INT DEFAULT 0;
+  DECLARE v_prior_owner_stays INT DEFAULT 0;
   DECLARE v_guest_pets VARCHAR(255) DEFAULT '';
   DECLARE v_lodging_charge DECIMAL(10,2) DEFAULT 0.00;
   DECLARE v_multi_pet_surcharge DECIMAL(10,2) DEFAULT 0.00;
   DECLARE v_grooming_fee DECIMAL(10,2) DEFAULT 0.00;
   DECLARE v_final_total DECIMAL(10,2) DEFAULT 0.00;
 
-  SELECT b.room_id, r.room_number, r.room_type, r.base_price_per_night, b.check_in_date, b.check_out_date, b.booking_status, b.total_price
-  INTO v_room_id, v_room_number, v_room_type, v_base_price, v_check_in, v_check_out, v_current_status, v_saved_total
+  SELECT b.user_id, b.room_id, r.room_number, r.room_type, r.base_price_per_night, b.check_in_date, b.check_out_date, b.booking_status, b.total_price
+  INTO v_user_id, v_room_id, v_room_number, v_room_type, v_base_price, v_check_in, v_check_out, v_current_status, v_saved_total
   FROM bookings b
   JOIN rooms r ON b.room_id = r.room_id
   WHERE b.booking_id = p_booking_id
@@ -218,6 +254,16 @@ BEGIN
     SET v_nights = 1;
   END IF;
 
+  SELECT COUNT(*)
+  INTO v_prior_owner_stays
+  FROM bookings b_prev
+  WHERE b_prev.room_id = v_room_id
+    AND b_prev.user_id = v_user_id
+    AND b_prev.booking_id < p_booking_id
+    AND b_prev.booking_status IN ('Pending', 'Confirmed', 'Completed')
+    AND b_prev.check_in_date < v_check_out
+    AND b_prev.check_out_date > v_check_in;
+
   IF v_current_status = 'Completed' THEN
     SELECT
       COUNT(bp.pet_id),
@@ -228,17 +274,20 @@ BEGIN
     JOIN pets p ON bp.pet_id = p.pet_id
     WHERE bp.booking_id = p_booking_id;
 
-    IF v_pet_count > 1 THEN
-      SET v_multi_pet_surcharge = (v_pet_count - 1) * 300.00 * v_nights;
+    IF v_prior_owner_stays > 0 THEN
+      SET v_lodging_charge = 0.00;
+      SET v_multi_pet_surcharge = v_pet_count * 300.00 * v_nights;
     ELSE
-      SET v_multi_pet_surcharge = 0.00;
+      IF v_pet_count > 1 THEN
+        SET v_multi_pet_surcharge = (v_pet_count - 1) * 300.00 * v_nights;
+      ELSE
+        SET v_multi_pet_surcharge = 0.00;
+      END IF;
+      SET v_lodging_charge = GREATEST(0.00, v_saved_total - v_multi_pet_surcharge - v_grooming_fee);
     END IF;
 
     SET v_final_total = v_saved_total;
-    SET v_lodging_charge = GREATEST(0.00, v_final_total - v_multi_pet_surcharge - v_grooming_fee);
   ELSE
-    SET v_lodging_charge = v_nights * v_base_price;
-
     SELECT
       COUNT(bp.pet_id),
       COALESCE(GROUP_CONCAT(p.name ORDER BY bp.booking_pet_id SEPARATOR ' & '), 'N/A'),
@@ -271,10 +320,16 @@ BEGIN
     END
     WHERE bp.booking_id = p_booking_id;
 
-    IF v_pet_count > 1 THEN
-      SET v_multi_pet_surcharge = (v_pet_count - 1) * 300.00 * v_nights;
+    IF v_prior_owner_stays > 0 THEN
+      SET v_lodging_charge = 0.00;
+      SET v_multi_pet_surcharge = v_pet_count * 300.00 * v_nights;
     ELSE
-      SET v_multi_pet_surcharge = 0.00;
+      SET v_lodging_charge = v_nights * v_base_price;
+      IF v_pet_count > 1 THEN
+        SET v_multi_pet_surcharge = (v_pet_count - 1) * 300.00 * v_nights;
+      ELSE
+        SET v_multi_pet_surcharge = 0.00;
+      END IF;
     END IF;
 
     SET v_final_total = v_lodging_charge + v_multi_pet_surcharge + v_grooming_fee;
@@ -337,7 +392,7 @@ INSERT INTO booking_pets (booking_id, pet_id, has_grooming, grooming_duration_mi
   (1, 2, FALSE, 0, 0.00),
   (2, 3, TRUE, 60, 1200.00);
 
--- Confirm active stays (Automatically fires trg_after_booking_status_change -> marks Rooms 101 & 102 Occupied)
+-- Confirm active stays (Automatically fires trg_after_booking_status_change -> marks room Occupied only when max_capacity is reached)
 UPDATE bookings
 SET booking_status = 'Confirmed'
 WHERE booking_id IN (1, 2);

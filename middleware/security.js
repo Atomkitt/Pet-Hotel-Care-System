@@ -135,9 +135,79 @@ function parseBookingDateRange(checkInInput, checkOutInput, options = {}) {
   };
 }
 
+function toComparableTimestamp(dtInput) {
+  if (dtInput instanceof Date) {
+    return Date.UTC(
+      dtInput.getFullYear(),
+      dtInput.getMonth(),
+      dtInput.getDate(),
+      dtInput.getHours(),
+      dtInput.getMinutes(),
+      dtInput.getSeconds()
+    );
+  }
+  const str = String(dtInput || '').trim();
+  const match = str.match(/^(\d{4})-(\d{2})-(\d{2})(?:[T\s](\d{2}):(\d{2})(?::(\d{2}))?)?/);
+  if (match) {
+    return Date.UTC(
+      Number(match[1]),
+      Number(match[2]) - 1,
+      Number(match[3]),
+      Number(match[4] || 0),
+      Number(match[5] || 0),
+      Number(match[6] || 0)
+    );
+  }
+  const parsed = Date.parse(str);
+  return Number.isNaN(parsed) ? 0 : parsed;
+}
+
+/**
+ * Computes the peak concurrent pet count within [windowStartInput, windowEndInput)
+ * across a list of bookings ({ check_in_date, check_out_date, pet_count }).
+ */
+function computePeakConcurrentPets(bookingsList, windowStartInput, windowEndInput) {
+  if (!Array.isArray(bookingsList) || bookingsList.length === 0) {
+    return 0;
+  }
+
+  const winStart = toComparableTimestamp(windowStartInput);
+  const winEnd = toComparableTimestamp(windowEndInput);
+  if (winEnd <= winStart) return 0;
+
+  const intervals = [];
+  const candidatePoints = new Set([winStart]);
+
+  for (const item of bookingsList) {
+    const start = Math.max(winStart, toComparableTimestamp(item.check_in_date));
+    const end = Math.min(winEnd, toComparableTimestamp(item.check_out_date));
+    const count = Number(item.pet_count || 0);
+    if (count > 0 && start < end) {
+      intervals.push({ start, end, count });
+      candidatePoints.add(start);
+    }
+  }
+
+  let peak = 0;
+  for (const point of candidatePoints) {
+    let activeAtPoint = 0;
+    for (const iv of intervals) {
+      if (iv.start <= point && point < iv.end) {
+        activeAtPoint += iv.count;
+      }
+    }
+    if (activeAtPoint > peak) {
+      peak = activeAtPoint;
+    }
+  }
+
+  return peak;
+}
+
 module.exports = {
   sendServerError,
   createCsrfOriginGuard,
   getTodayBangkokYMD,
-  parseBookingDateRange
+  parseBookingDateRange,
+  computePeakConcurrentPets
 };

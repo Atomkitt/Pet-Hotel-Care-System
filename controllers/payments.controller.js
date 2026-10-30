@@ -6,7 +6,7 @@ const QRCode = require('qrcode');
 const pool = require('../db');
 const { emitEvent } = require('../socket');
 const { PRIVATE_SLIP_DIR, removePrivateSlipFile } = require('../middleware/upload');
-const { sendServerError } = require('../middleware/security');
+const { sendServerError, computePeakConcurrentPets } = require('../middleware/security');
 
 const DEFAULT_PROMPTPAY_ID = process.env.PROMPTPAY_ID || '061-852-5229';
 
@@ -155,7 +155,7 @@ async function confirmPayment(req, res) {
     await conn.beginTransaction();
 
     const [rows] = await conn.execute(
-      'SELECT b.booking_id, b.user_id, b.room_id, b.check_in_date, b.check_out_date, b.total_price, b.booking_status, b.payment_slip_url, r.room_number, r.status AS room_status FROM bookings b JOIN rooms r ON b.room_id = r.room_id WHERE b.booking_id = ? FOR UPDATE',
+      'SELECT b.booking_id, b.user_id, b.room_id, b.check_in_date, b.check_out_date, b.total_price, b.booking_status, b.payment_slip_url, r.room_number, r.max_capacity, r.status AS room_status FROM bookings b JOIN rooms r ON b.room_id = r.room_id WHERE b.booking_id = ? FOR UPDATE',
       [bookingId]
     );
 
@@ -182,22 +182,56 @@ async function confirmPayment(req, res) {
       });
     }
 
-    const [conflicts] = await conn.execute(
-      'SELECT booking_id FROM bookings WHERE room_id = ? AND booking_id != ? AND booking_status = ? AND check_in_date < ? AND check_out_date > ? LIMIT 1 FOR UPDATE',
-      [booking.room_id, bookingId, 'Confirmed', booking.check_out_date, booking.check_in_date]
-    );
+    if (booking.booking_status !== 'Confirmed') {
+      const [overlappingStays] = await conn.execute(
+        'SELECT booking_id, user_id, check_in_date, check_out_date FROM bookings WHERE room_id = ? AND booking_id != ? AND booking_status = ? AND check_in_date < ? AND check_out_date > ? FOR UPDATE',
+        [booking.room_id, bookingId, 'Confirmed', booking.check_out_date, booking.check_in_date]
+      );
 
-    if (conflicts.length > 0) {
-      await conn.rollback();
-      if (req.file) removePrivateSlipFile(req.file.filename);
-      return res.status(409).json({
-        error: `Room #${booking.room_number} already has an overlapping Checked-In booking (#${conflicts[0].booking_id}).`
-      });
+      const otherGuestStay = overlappingStays.find((s) => s.user_id !== booking.user_id);
+      if (otherGuestStay) {
+        await conn.rollback();
+        if (req.file) removePrivateSlipFile(req.file.filename);
+        return res.status(409).json({
+          error: `Room #${booking.room_number} already has an overlapping Checked-In stay from another guest (#${otherGuestStay.booking_id}).`
+        });
+      }
+
+      const [thisPetRows] = await conn.execute(
+        'SELECT COUNT(pet_id) AS cnt FROM booking_pets WHERE booking_id = ?',
+        [bookingId]
+      );
+      const thisPetCount = Number(thisPetRows[0]?.cnt || 0);
+
+      let peakConfirmedPets = 0;
+      if (overlappingStays.length > 0) {
+        const stayIds = overlappingStays.map((s) => s.booking_id);
+        const placeholders = stayIds.map(() => '?').join(', ');
+        const [stayCountRows] = await conn.execute(
+          `SELECT booking_id, COUNT(pet_id) AS pet_count FROM booking_pets WHERE booking_id IN (${placeholders}) GROUP BY booking_id`,
+          stayIds
+        );
+        const countMap = new Map(stayCountRows.map((r) => [r.booking_id, Number(r.pet_count)]));
+        const intervals = overlappingStays.map((s) => ({
+          ...s,
+          pet_count: countMap.get(s.booking_id) || 0
+        }));
+        peakConfirmedPets = computePeakConcurrentPets(intervals, booking.check_in_date, booking.check_out_date);
+      }
+
+      const maxCap = Number(booking.max_capacity);
+      if (peakConfirmedPets + thisPetCount > maxCap) {
+        await conn.rollback();
+        if (req.file) removePrivateSlipFile(req.file.filename);
+        return res.status(409).json({
+          error: `Cannot check in: Room #${booking.room_number} max capacity is ${maxCap} pet(s), and ${peakConfirmedPets} pet(s) are already checked in during these dates.`
+        });
+      }
     }
 
     const updatedSlipRef = req.file ? req.file.filename : booking.payment_slip_url;
 
-    // Update status to 'Confirmed' -> Fires trg_after_booking_status_change -> marks room 'Occupied'
+    // Update status to 'Confirmed' -> Fires trg_after_booking_status_change -> marks room 'Occupied' only when max_capacity is reached
     await conn.execute(
       'UPDATE bookings SET booking_status = ?, payment_status = ?, payment_slip_url = ? WHERE booking_id = ?',
       ['Confirmed', 'Paid', updatedSlipRef, bookingId]
@@ -247,8 +281,13 @@ async function confirmPayment(req, res) {
       ['role:Admin', 'role:Developer']
     );
 
+    const roomStateNote =
+      updatedRoom && updatedRoom.status === 'Occupied'
+        ? `Room #${booking.room_number} is now at full capacity (Occupied).`
+        : `Room #${booking.room_number} remains Available for remaining owner pet slots.`;
+
     return res.json({
-      message: `Payment verified by staff! Booking #${bookingId} is now Confirmed and Room #${booking.room_number} is locked as Occupied.`,
+      message: `Payment verified by staff! Booking #${bookingId} is now Confirmed (${roomStateNote})`,
       booking_id: bookingId,
       booking_status: 'Confirmed',
       payment_status: 'Paid',

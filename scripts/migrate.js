@@ -108,13 +108,41 @@ async function runMigration() {
       await conn.query(stmt);
     }
 
-    console.log('Migrations 001 & 002 (schema + hardened triggers + idempotent stored procedure) completed successfully!');
+    // Synchronize existing non-Maintenance room statuses with capacity-based occupancy rule
+    const [allRooms] = await conn.execute('SELECT room_id, max_capacity, status FROM rooms WHERE status != ?', ['Maintenance']);
+    for (const rm of allRooms) {
+      const [peakRows] = await conn.execute(
+        `SELECT COALESCE(MAX(stay_peaks.concurrent_pets), 0) AS peak_pets
+         FROM (
+           SELECT b1.booking_id, COUNT(bp2.pet_id) AS concurrent_pets
+           FROM bookings b1
+           JOIN bookings b2
+             ON b2.room_id = b1.room_id
+            AND b2.booking_status = 'Confirmed'
+            AND b2.check_in_date <= b1.check_in_date
+            AND b2.check_out_date > b1.check_in_date
+           JOIN booking_pets bp2
+             ON bp2.booking_id = b2.booking_id
+           WHERE b1.room_id = ?
+             AND b1.booking_status = 'Confirmed'
+           GROUP BY b1.booking_id
+         ) AS stay_peaks`,
+        [rm.room_id]
+      );
+      const peakPets = Number(peakRows[0]?.peak_pets || 0);
+      const targetStatus = peakPets >= Number(rm.max_capacity) ? 'Occupied' : 'Available';
+      if (rm.status !== targetStatus) {
+        await conn.execute('UPDATE rooms SET status = ? WHERE room_id = ?', [targetStatus, rm.room_id]);
+      }
+    }
+
+    console.log('Migrations 001 & 002 (schema + capacity-aware triggers + idempotent stored procedure) completed successfully!');
   } finally {
     await conn.end();
   }
 }
 
 runMigration().catch((err) => {
-  console.error('Migration failed:', err.message);
+  console.error('Migration failed:', err.code || err.message || err);
   process.exit(1);
 });

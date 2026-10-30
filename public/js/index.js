@@ -6,9 +6,12 @@
 
   let currentUser = null;
   let ownerPets = [];
+  let myCachedBookings = [];
   let isFirstPetLoad = true;
   let socket = null;
-  let currentActiveBookingId = null;
+  let currentActiveBookingIds = [];
+  let selectedRoomIsAddon = false;
+  let selectedRoomMaxCapacity = 2;
   let toastTimer = null;
 
   function showToast(msg) {
@@ -129,8 +132,8 @@
     socket = io({ withCredentials: true });
 
     socket.on('connect', () => {
-      if (currentActiveBookingId) {
-        socket.emit('join:booking', currentActiveBookingId);
+      for (const bId of currentActiveBookingIds) {
+        socket.emit('join:booking', bId);
       }
     });
 
@@ -147,7 +150,8 @@
       } else if (payload && payload.reason === 'booking_status_updated') {
         showToast(`🔔 Booking #${payload.booking_id} status changed to '${payload.booking_status}'`);
       }
-      await Promise.all([filterRooms(), loadBookingsAndTimeline(false)]);
+      await loadBookingsAndTimeline(false);
+      await filterRooms();
     });
   }
 
@@ -337,9 +341,76 @@
         .join('');
 
       isFirstPetLoad = false;
+      syncPetCheckboxAvailability();
       updateEstimatedCost();
     } catch (err) {
       console.error('Error loading pets:', err);
+    }
+  }
+
+  function toYmdPart(dtVal) {
+    if (!dtVal) return '';
+    const d = new Date(dtVal);
+    if (!Number.isNaN(d.getTime())) {
+      const y = d.getFullYear();
+      const m = String(d.getMonth() + 1).padStart(2, '0');
+      const day = String(d.getDate()).padStart(2, '0');
+      return `${y}-${m}-${day}`;
+    }
+    return String(dtVal).slice(0, 10);
+  }
+
+  function syncPetCheckboxAvailability() {
+    const checkIn = document.getElementById('checkIn').value;
+    const checkOut = document.getElementById('checkOut').value;
+    const bookedPetIds = new Set();
+
+    if (checkIn && checkOut && checkOut > checkIn) {
+      for (const b of myCachedBookings) {
+        if (b.booking_status !== 'Pending' && b.booking_status !== 'Confirmed') continue;
+        const bIn = toYmdPart(b.check_in_date);
+        const bOut = toYmdPart(b.check_out_date);
+        if (bIn < checkOut && bOut > checkIn) {
+          for (const p of b.pets || []) {
+            bookedPetIds.add(Number(p.pet_id));
+          }
+        }
+      }
+    }
+
+    const checkboxes = Array.from(document.querySelectorAll('input[name="selectedPets"]'));
+    let anyChecked = false;
+
+    for (const cb of checkboxes) {
+      const pId = Number(cb.value);
+      const labelEl = cb.closest('label');
+      let noteEl = labelEl ? labelEl.querySelector('.pet-booked-note') : null;
+
+      if (bookedPetIds.has(pId)) {
+        cb.checked = false;
+        cb.disabled = true;
+        if (labelEl) labelEl.style.opacity = '0.55';
+        if (labelEl && !noteEl) {
+          noteEl = document.createElement('small');
+          noteEl.className = 'pet-booked-note';
+          noteEl.style.color = 'var(--text-muted)';
+          noteEl.textContent = '(จองแล้ว)';
+          labelEl.appendChild(noteEl);
+        }
+      } else {
+        cb.disabled = false;
+        if (labelEl) labelEl.style.opacity = '1';
+        if (noteEl) noteEl.remove();
+        if (cb.checked) anyChecked = true;
+      }
+    }
+
+    // Auto-select the first unbooked pet if all previously checked pets were already booked
+    if (!anyChecked) {
+      const firstAvailable = checkboxes.find((cb) => !cb.disabled);
+      if (firstAvailable) {
+        firstAvailable.checked = true;
+      }
     }
   }
 
@@ -430,13 +501,20 @@
     const roomId = cardEl.getAttribute('data-room-id');
     const roomName = cardEl.getAttribute('data-room-name');
     const roomRate = cardEl.getAttribute('data-room-rate');
-    const maxCapacity = cardEl.getAttribute('data-room-capacity');
+    const remainingCapacity = Number(cardEl.getAttribute('data-room-capacity')) || 1;
+    const roomMax = Number(cardEl.getAttribute('data-room-max')) || remainingCapacity;
+    const isAddon = cardEl.getAttribute('data-room-addon') === '1';
+
+    selectedRoomIsAddon = isAddon;
+    selectedRoomMaxCapacity = roomMax;
 
     document.getElementById('selectedRoomId').value = roomId;
     document.getElementById('selectedRoomRate').value = roomRate;
     document.getElementById('selectedRoomName').value = roomName;
-    document.getElementById('selectedRoomCapacity').value = maxCapacity;
-    document.getElementById('selectedRoomDisplay').innerText = `${roomName} — Max ${maxCapacity} pet(s)`;
+    document.getElementById('selectedRoomCapacity').value = remainingCapacity;
+    document.getElementById('selectedRoomDisplay').innerText = isAddon
+      ? `${roomName} — จองเพิ่มเข้าห้องเดิมได้อีก ${remainingCapacity}/${roomMax} ตัว`
+      : `${roomName} — ว่างรับได้ ${remainingCapacity}/${roomMax} ตัว`;
 
     updateEstimatedCost();
   }
@@ -448,10 +526,16 @@
     const selectedCount = checkedPetInputs.length;
     const grooming = document.getElementById('groomingToggle').checked;
 
-    let total = roomRate * nights;
-    if (selectedCount > 1) {
-      total += (selectedCount - 1) * 300 * nights;
+    let total = 0;
+    if (selectedRoomIsAddon) {
+      total = selectedCount * 300 * nights;
+    } else {
+      total = roomRate * nights;
+      if (selectedCount > 1) {
+        total += (selectedCount - 1) * 300 * nights;
+      }
     }
+
     if (grooming) {
       for (const checkbox of checkedPetInputs) {
         total += groomingFeeByWeight(checkbox.dataset.weight || 10);
@@ -459,8 +543,9 @@
     }
 
     document.getElementById('pricePreview').innerText = total.toLocaleString();
-    document.getElementById('priceNote').innerText =
-      `*Includes ${nights} night${nights > 1 ? 's' : ''} stay + extra pet fee + weight-tiered grooming`;
+    document.getElementById('priceNote').innerText = selectedRoomIsAddon
+      ? `*จองสัตว์เลี้ยงเพิ่มเข้าห้องเดิมของคุณ (${nights} คืน × 300 THB/ตัว + ค่าอาบน้ำตามน้ำหนัก)`
+      : `*Includes ${nights} night${nights > 1 ? 's' : ''} stay + extra pet fee + weight-tiered grooming`;
   }
 
   async function filterRooms() {
@@ -475,12 +560,13 @@
       return;
     }
 
+    syncPetCheckboxAvailability();
+
     try {
+      const queryStr = `check_in=${encodeURIComponent(checkIn)}&check_out=${encodeURIComponent(checkOut)}`;
       const [allRes, availRes] = await Promise.all([
-        apiFetch('/api/rooms'),
-        apiFetch(
-          `/api/rooms/available?check_in=${encodeURIComponent(checkIn)}&check_out=${encodeURIComponent(checkOut)}`
-        )
+        apiFetch(`/api/rooms?${queryStr}`),
+        apiFetch(`/api/rooms/available?${queryStr}`)
       ]);
 
       const allRooms = await safeJson(allRes);
@@ -491,43 +577,70 @@
         );
       }
 
-      const availableIds = new Set(availableRooms.map((r) => r.room_id));
+      const availByRoomId = new Map(availableRooms.map((r) => [r.room_id, r]));
       const previousRoomId = Number(document.getElementById('selectedRoomId').value);
       const chosenRoom = availableRooms.find((r) => r.room_id === previousRoomId) || availableRooms[0] || null;
 
       roomGrid.innerHTML = allRooms
         .map((room) => {
-          const isAvailable = availableIds.has(room.room_id);
+          const availInfo = availByRoomId.get(room.room_id) || null;
           const isMaintenance = room.status === 'Maintenance';
           const isSelected = chosenRoom && chosenRoom.room_id === room.room_id;
           const displayType = room.room_type === 'Suite' ? 'VIP' : room.room_type;
           const roomLabel = `Room ${room.room_number} (${displayType})`;
           const priceFormatted = Number(room.base_price_per_night).toLocaleString();
+          const maxCap = Number(room.max_capacity);
+          const myOcc = Number(room.my_occupied_pets || 0);
 
-          if (!isAvailable) {
-            const badgeHtml = isMaintenance
-              ? '<span class="badge-status badge-maintenance">🛠️ Maintenance</span>'
-              : '<span class="badge-status badge-occupied">🔴 Booked</span>';
+          if (!availInfo) {
+            let badgeHtml = '<span class="badge-status badge-occupied">🔴 Occupied (ไม่ว่าง)</span>';
+            let slotSubtext = `${escapeHtml(formatSuiteLabel(room.room_type))} (Max ${maxCap})`;
+
+            if (isMaintenance) {
+              badgeHtml = '<span class="badge-status badge-maintenance">🛠️ Maintenance</span>';
+            } else if (myOcc >= maxCap) {
+              badgeHtml = `<span class="badge-status badge-occupied">🔴 Occupied (เต็ม ${maxCap}/${maxCap})</span>`;
+              slotSubtext = `${escapeHtml(formatSuiteLabel(room.room_type))} (เหลือ 0/${maxCap} ตัว)`;
+            }
+
             return `
               <div class="room-select-card disabled">
                 <strong style="display:block;">Room ${escapeHtml(room.room_number)}</strong>
-                <small style="color: var(--text-muted);">${escapeHtml(formatSuiteLabel(room.room_type))} (Max ${Number(room.max_capacity)})</small>
+                <small style="color: var(--text-muted);">${slotSubtext}</small>
                 <div>${priceFormatted} THB/night</div>
                 ${badgeHtml}
               </div>
             `;
           }
 
+          const remCap = Number(availInfo.remaining_capacity);
+          const occPets = Number(availInfo.occupied_pets || 0);
+          const isAddon = Boolean(availInfo.is_owner_addon);
+
+          const slotText = isAddon
+            ? `${escapeHtml(formatSuiteLabel(room.room_type))} (พักแล้ว ${occPets}/${maxCap} • เหลือ ${remCap} ตัว)`
+            : `${escapeHtml(formatSuiteLabel(room.room_type))} (ว่าง ${remCap}/${maxCap} ตัว)`;
+
+          const priceDisplay = isAddon
+            ? '+300 THB/night/pet'
+            : `${priceFormatted} THB/night`;
+
+          const availBadgeText = isAddon
+            ? `🟢 ว่างเพิ่มได้ (เหลือ ${remCap}/${maxCap})`
+            : `🟢 Available (เหลือ ${remCap}/${maxCap})`;
+
           return `
             <div class="room-select-card ${isSelected ? 'selected' : ''}"
                  data-room-id="${Number(room.room_id)}"
                  data-room-name="${escapeHtml(roomLabel)}"
                  data-room-rate="${Number(room.base_price_per_night)}"
-                 data-room-capacity="${Number(room.max_capacity)}">
+                 data-room-capacity="${remCap}"
+                 data-room-max="${maxCap}"
+                 data-room-addon="${isAddon ? '1' : '0'}">
               <strong style="display:block;">Room ${escapeHtml(room.room_number)}</strong>
-              <small style="color: var(--text-muted);">${escapeHtml(formatSuiteLabel(room.room_type))} (Max ${Number(room.max_capacity)})</small>
-              <div>${priceFormatted} THB/night</div>
-              <span class="badge-status badge-available">🟢 Available</span>
+              <small style="color: var(--text-muted);">${slotText}</small>
+              <div>${priceDisplay}</div>
+              <span class="badge-status badge-available">${availBadgeText}</span>
             </div>
           `;
         })
@@ -536,13 +649,22 @@
       if (chosenRoom) {
         const displayType = chosenRoom.room_type === 'Suite' ? 'VIP' : chosenRoom.room_type;
         const label = `Room ${chosenRoom.room_number} (${displayType})`;
+        const remCap = Number(chosenRoom.remaining_capacity);
+        const maxCap = Number(chosenRoom.max_capacity);
+        const isAddon = Boolean(chosenRoom.is_owner_addon);
+
+        selectedRoomIsAddon = isAddon;
+        selectedRoomMaxCapacity = maxCap;
+
         document.getElementById('selectedRoomId').value = chosenRoom.room_id;
         document.getElementById('selectedRoomRate').value = Number(chosenRoom.base_price_per_night);
         document.getElementById('selectedRoomName').value = label;
-        document.getElementById('selectedRoomCapacity').value = chosenRoom.max_capacity;
-        document.getElementById('selectedRoomDisplay').innerText =
-          `${label} — Max ${chosenRoom.max_capacity} pet(s)`;
+        document.getElementById('selectedRoomCapacity').value = remCap;
+        document.getElementById('selectedRoomDisplay').innerText = isAddon
+          ? `${label} — จองเพิ่มเข้าห้องเดิมได้อีก ${remCap}/${maxCap} ตัว`
+          : `${label} — ว่างรับได้ ${remCap}/${maxCap} ตัว`;
       } else {
+        selectedRoomIsAddon = false;
         document.getElementById('selectedRoomId').value = '';
         document.getElementById('selectedRoomRate').value = 0;
         document.getElementById('selectedRoomDisplay').innerText = 'No rooms available for selected dates';
@@ -669,7 +791,9 @@
     }
     if (petIds.length > maxCapacity) {
       alert(
-        `Selected suite accommodates at most ${maxCapacity} pet(s). Please select fewer pets or choose a larger suite.`
+        selectedRoomIsAddon
+          ? `ห้องนี้เหลือที่ว่างรับสัตว์เลี้ยงเพิ่มได้อีก ${maxCapacity} ตัว (จากความจุสูงสุด ${selectedRoomMaxCapacity} ตัว) กรุณาเลือกสัตว์เลี้ยงไม่เกินจำนวนที่เหลือครับ`
+          : `Selected suite accommodates at most ${maxCapacity} pet(s). Please select fewer pets or choose a larger suite.`
       );
       return;
     }
@@ -696,7 +820,8 @@
         return;
       }
 
-      await Promise.all([filterRooms(), loadBookingsAndTimeline(false)]);
+      await loadBookingsAndTimeline(false);
+      await filterRooms();
       await openPaymentModal(data.booking.booking_id);
     } catch (err) {
       if (err.message !== 'Unauthorized') {
@@ -722,7 +847,8 @@
         alert(data.error || 'Could not cancel reservation.');
         return;
       }
-      await Promise.all([filterRooms(), loadBookingsAndTimeline(false)]);
+      await loadBookingsAndTimeline(false);
+      await filterRooms();
     } catch (err) {
       if (err.message !== 'Unauthorized') {
         alert('Error cancelling reservation: ' + err.message);
@@ -742,10 +868,16 @@
       const bookings = await safeJson(res);
       if (!res.ok) throw new Error(bookings.error || 'Failed to load bookings');
 
-      const activeStay =
-        bookings.find((b) => b.booking_status === 'Confirmed') ||
-        bookings.find((b) => b.booking_status === 'Completed');
-      const pendingStays = bookings.filter((b) => b.booking_status === 'Pending');
+      myCachedBookings = Array.isArray(bookings) ? bookings : [];
+      syncPetCheckboxAvailability();
+      updateEstimatedCost();
+
+      const confirmedStays = myCachedBookings.filter((b) => b.booking_status === 'Confirmed');
+      const targetStays =
+        confirmedStays.length > 0
+          ? confirmedStays
+          : myCachedBookings.filter((b) => b.booking_status === 'Completed').slice(0, 1);
+      const pendingStays = myCachedBookings.filter((b) => b.booking_status === 'Pending');
 
       if (pendingStays.length > 0) {
         pendingList.innerHTML = pendingStays
@@ -780,8 +912,8 @@
         pendingList.innerHTML = '';
       }
 
-      if (!activeStay) {
-        currentActiveBookingId = null;
+      if (targetStays.length === 0) {
+        currentActiveBookingIds = [];
         banner.innerHTML =
           '<strong>No Active Checked-In Stay</strong><div style="font-size: 0.8rem; color: #92400E;">Scan PromptPay QR, upload your transfer slip, and await staff check-in to view live care updates.</div>';
         timeline.innerHTML =
@@ -789,25 +921,41 @@
         return;
       }
 
-      currentActiveBookingId = Number(activeStay.booking_id);
+      currentActiveBookingIds = targetStays.map((s) => Number(s.booking_id));
       if (socket && socket.connected) {
-        socket.emit('join:booking', currentActiveBookingId);
+        for (const bId of currentActiveBookingIds) {
+          socket.emit('join:booking', bId);
+        }
       }
 
-      const petNames = (activeStay.pets || []).map((p) => p.name).join(' & ');
-      const suiteLabel = formatSuiteLabel(activeStay.room_type);
+      // Group active stays by room so add-on bookings in the same suite appear unified
+      const primaryStay = targetStays[0];
+      const sameRoomStays = targetStays.filter((s) => Number(s.room_id) === Number(primaryStay.room_id));
+      const allActivePetNames = [
+        ...new Set(sameRoomStays.flatMap((s) => (s.pets || []).map((p) => p.name)))
+      ].join(' & ');
+      const suiteLabel = formatSuiteLabel(primaryStay.room_type);
       const statusLabel =
-        activeStay.booking_status === 'Confirmed' ? 'Current Active Stay' : 'Recent Completed Stay';
+        primaryStay.booking_status === 'Confirmed' ? 'Current Active Stay' : 'Recent Completed Stay';
 
       banner.innerHTML = `
-        <strong>${statusLabel}:</strong> ${escapeHtml(suiteLabel)} #${escapeHtml(activeStay.room_number)} (${escapeHtml(petNames)})
-        <div style="font-size: 0.8rem; color: #92400E;">Check-in: ${escapeHtml(formatShortDate(activeStay.check_in_date))} • Due Checkout: ${escapeHtml(formatShortDate(activeStay.check_out_date))}</div>
+        <strong>${statusLabel}:</strong> ${escapeHtml(suiteLabel)} #${escapeHtml(primaryStay.room_number)} (${escapeHtml(allActivePetNames)})
+        <div style="font-size: 0.8rem; color: #92400E;">Check-in: ${escapeHtml(formatShortDate(primaryStay.check_in_date))} • Due Checkout: ${escapeHtml(formatShortDate(primaryStay.check_out_date))}</div>
       `;
 
-      const logsRes = await apiFetch(`/api/logs/${currentActiveBookingId}`);
-      const logs = await safeJson(logsRes);
+      const logResponses = await Promise.all(
+        currentActiveBookingIds.map((bId) => apiFetch(`/api/logs/${bId}`).then((r) => safeJson(r).then((d) => ({ ok: r.ok, data: d }))))
+      );
 
-      if (!logsRes.ok || !Array.isArray(logs) || logs.length === 0) {
+      const mergedLogs = [];
+      for (const item of logResponses) {
+        if (item.ok && Array.isArray(item.data)) {
+          mergedLogs.push(...item.data);
+        }
+      }
+      mergedLogs.sort((a, b) => new Date(b.log_time) - new Date(a.log_time));
+
+      if (mergedLogs.length === 0) {
         timeline.innerHTML = `
           <li class="timeline-item">
             <span class="timeline-dot"></span>
@@ -817,7 +965,7 @@
         return;
       }
 
-      timeline.innerHTML = logs
+      timeline.innerHTML = mergedLogs
         .map(
           (log, idx) => `
           <li class="timeline-item ${animateFirst && idx === 0 ? 'realtime-highlight' : ''}">
@@ -904,7 +1052,8 @@
     if (!user) return;
     initRealtimeSocket();
     await loadPets();
-    await Promise.all([filterRooms(), loadBookingsAndTimeline(false)]);
+    await loadBookingsAndTimeline(false);
+    await filterRooms();
   }
 
   document.addEventListener('DOMContentLoaded', initPortal);
