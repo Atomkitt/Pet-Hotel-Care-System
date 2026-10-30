@@ -240,7 +240,7 @@
         <label for="modalPetPhoto">Pet Avatar Photo <small style="color: var(--text-muted);">(JPG, PNG, WEBP • Max 5MB)</small></label>
         <input type="file" id="modalPetPhoto" accept=".jpg,.jpeg,.png,.webp,image/jpeg,image/png,image/webp" style="padding: 7px;">
 
-        <label for="modalVaccineCard">Vaccine Certificate (สมุดวัคซีน) <small style="color: var(--text-muted);">(JPG, PNG, WEBP • Max 5MB)</small></label>
+        <label for="modalVaccineCard">Vaccine Certificate <small style="color: var(--text-muted);">(JPG, PNG, WEBP • Max 5MB)</small></label>
         <input type="file" id="modalVaccineCard" accept=".jpg,.jpeg,.png,.webp,image/jpeg,image/png,image/webp" style="padding: 7px;">
 
         <label for="modalMedicalNotes">Medical Notes</label>
@@ -257,7 +257,7 @@
   <!-- PromptPay QR Code Payment & Transfer Slip Modal -->
   <div class="modal" id="paymentModal">
     <div class="modal-content" style="max-width: 430px; max-height: 92vh; overflow-y: auto;">
-      <h3 style="margin-bottom: 12px;">💳 ชำระเงินผ่าน PromptPay QR</h3>
+      <h3 style="margin-bottom: 12px;">💳 Pay via PromptPay QR</h3>
 
       <div class="promptpay-banner">🇹🇭 THAI QR PAYMENT • PROMPTPAY</div>
       <div class="qr-frame">
@@ -269,7 +269,7 @@
           Booking <strong id="qrBookingLabel">#-</strong> • Room <strong id="qrRoomLabel">#-</strong>
         </div>
         <div style="font-size: 1.25rem; font-weight: 800; color: var(--primary); margin-top: 6px;">
-          ยอดชำระสุทธิ: <span id="qrAmountDisplay">0</span> THB
+          Amount Due: <span id="qrAmountDisplay">0</span> THB
         </div>
       </div>
 
@@ -277,7 +277,7 @@
 
       <div id="slipUploadSection" style="margin-bottom: 12px;">
         <label for="paymentSlipInput" style="font-size: 0.84rem; font-weight: 600;">
-          🧾 แนบสลิปโอนเงิน (Transfer Slip) <small style="color: var(--text-muted);">(JPG, PNG, WEBP • Max 5MB)</small>
+          🧾 Upload Transfer Slip <small style="color: var(--text-muted);">(JPG, PNG, WEBP • Max 5MB)</small>
         </label>
         <input type="file" id="paymentSlipInput" accept=".jpg,.jpeg,.png,.webp,image/jpeg,image/png,image/webp" style="padding: 7px; margin-bottom: 4px;">
         <div id="existingSlipNotice" style="font-size: 0.78rem; color: var(--primary); display: none;"></div>
@@ -285,10 +285,10 @@
 
       <div style="display: flex; flex-direction: column; gap: 8px;">
         <button type="button" id="confirmPaidBtn" class="btn-primary" style="width: 100%;">
-          ✅ ส่งสลิปและแจ้งชำระเงิน
+          ✅ Submit Transfer Slip
         </button>
         <button type="button" id="closePaymentModalBtn" class="btn-danger btn-sm" style="width: 100%; padding: 9px;">
-          ชำระภายหลัง (Pay Later)
+          Pay Later
         </button>
       </div>
     </div>

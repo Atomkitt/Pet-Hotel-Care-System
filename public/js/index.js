@@ -213,7 +213,7 @@
   function validateImageInput(fileInput, label, required = false) {
     if (!fileInput || !fileInput.files || fileInput.files.length === 0) {
       if (required) {
-        alert(`${label}: กรุณาเลือกไฟล์รูปภาพหลักฐานการโอนเงิน (JPG, PNG, WEBP)`);
+        alert(`${label}: Please select a transfer slip image file (JPG, PNG, WEBP).`);
         return false;
       }
       return true;
@@ -300,7 +300,7 @@
 
           const breedText = pet.breed ? escapeHtml(pet.breed) : escapeHtml(pet.species);
           const vaccineBadge = pet.vaccine_card_url
-            ? `<a href="${escapeHtml(pet.vaccine_card_url)}" target="_blank" rel="noopener" class="tag" style="background: #E0E7FF; color: #3730A3; text-decoration: none; margin-left: 4px;">📋 สมุดวัคซีน</a>`
+            ? `<a href="${escapeHtml(pet.vaccine_card_url)}" target="_blank" rel="noopener" class="tag" style="background: #E0E7FF; color: #3730A3; text-decoration: none; margin-left: 4px;">📋 Vaccine Card</a>`
             : '';
           const notesLine = pet.medical_notes
             ? `<div style="font-size: 0.75rem; color: var(--text-muted); margin-top: 4px;">${escapeHtml(pet.medical_notes)}</div>`
@@ -394,7 +394,7 @@
           noteEl = document.createElement('small');
           noteEl.className = 'pet-booked-note';
           noteEl.style.color = 'var(--text-muted)';
-          noteEl.textContent = '(จองแล้ว)';
+          noteEl.textContent = '(Already Booked)';
           labelEl.appendChild(noteEl);
         }
       } else {
@@ -513,8 +513,8 @@
     document.getElementById('selectedRoomName').value = roomName;
     document.getElementById('selectedRoomCapacity').value = remainingCapacity;
     document.getElementById('selectedRoomDisplay').innerText = isAddon
-      ? `${roomName} — จองเพิ่มเข้าห้องเดิมได้อีก ${remainingCapacity}/${roomMax} ตัว`
-      : `${roomName} — ว่างรับได้ ${remainingCapacity}/${roomMax} ตัว`;
+      ? `${roomName} — Add-on to Your Suite (${remainingCapacity}/${roomMax} slot${remainingCapacity > 1 ? 's' : ''} left)`
+      : `${roomName} — ${remainingCapacity}/${roomMax} pet slot${remainingCapacity > 1 ? 's' : ''} available`;
 
     updateEstimatedCost();
   }
@@ -544,7 +544,7 @@
 
     document.getElementById('pricePreview').innerText = total.toLocaleString();
     document.getElementById('priceNote').innerText = selectedRoomIsAddon
-      ? `*จองสัตว์เลี้ยงเพิ่มเข้าห้องเดิมของคุณ (${nights} คืน × 300 THB/ตัว + ค่าอาบน้ำตามน้ำหนัก)`
+      ? `*Add-on pet rate for your reserved suite (${nights} night${nights > 1 ? 's' : ''} × 300 THB/pet + weight-tiered grooming)`
       : `*Includes ${nights} night${nights > 1 ? 's' : ''} stay + extra pet fee + weight-tiered grooming`;
   }
 
@@ -593,14 +593,14 @@
           const myOcc = Number(room.my_occupied_pets || 0);
 
           if (!availInfo) {
-            let badgeHtml = '<span class="badge-status badge-occupied">🔴 Occupied (ไม่ว่าง)</span>';
+            let badgeHtml = '<span class="badge-status badge-occupied">🔴 Occupied</span>';
             let slotSubtext = `${escapeHtml(formatSuiteLabel(room.room_type))} (Max ${maxCap})`;
 
             if (isMaintenance) {
               badgeHtml = '<span class="badge-status badge-maintenance">🛠️ Maintenance</span>';
             } else if (myOcc >= maxCap) {
-              badgeHtml = `<span class="badge-status badge-occupied">🔴 Occupied (เต็ม ${maxCap}/${maxCap})</span>`;
-              slotSubtext = `${escapeHtml(formatSuiteLabel(room.room_type))} (เหลือ 0/${maxCap} ตัว)`;
+              badgeHtml = `<span class="badge-status badge-occupied">🔴 Occupied (Full ${maxCap}/${maxCap})</span>`;
+              slotSubtext = `${escapeHtml(formatSuiteLabel(room.room_type))} (0/${maxCap} slots left)`;
             }
 
             return `
@@ -618,16 +618,16 @@
           const isAddon = Boolean(availInfo.is_owner_addon);
 
           const slotText = isAddon
-            ? `${escapeHtml(formatSuiteLabel(room.room_type))} (พักแล้ว ${occPets}/${maxCap} • เหลือ ${remCap} ตัว)`
-            : `${escapeHtml(formatSuiteLabel(room.room_type))} (ว่าง ${remCap}/${maxCap} ตัว)`;
+            ? `${escapeHtml(formatSuiteLabel(room.room_type))} (${occPets}/${maxCap} in room • ${remCap} left)`
+            : `${escapeHtml(formatSuiteLabel(room.room_type))} (${remCap}/${maxCap} slots open)`;
 
           const priceDisplay = isAddon
             ? '+300 THB/night/pet'
             : `${priceFormatted} THB/night`;
 
           const availBadgeText = isAddon
-            ? `🟢 ว่างเพิ่มได้ (เหลือ ${remCap}/${maxCap})`
-            : `🟢 Available (เหลือ ${remCap}/${maxCap})`;
+            ? `🟢 Available (${remCap}/${maxCap} left)`
+            : `🟢 Available (${remCap}/${maxCap} open)`;
 
           return `
             <div class="room-select-card ${isSelected ? 'selected' : ''}"
@@ -661,8 +661,8 @@
         document.getElementById('selectedRoomName').value = label;
         document.getElementById('selectedRoomCapacity').value = remCap;
         document.getElementById('selectedRoomDisplay').innerText = isAddon
-          ? `${label} — จองเพิ่มเข้าห้องเดิมได้อีก ${remCap}/${maxCap} ตัว`
-          : `${label} — ว่างรับได้ ${remCap}/${maxCap} ตัว`;
+          ? `${label} — Add-on to Your Suite (${remCap}/${maxCap} slot${remCap > 1 ? 's' : ''} left)`
+          : `${label} — ${remCap}/${maxCap} pet slot${remCap > 1 ? 's' : ''} available`;
       } else {
         selectedRoomIsAddon = false;
         document.getElementById('selectedRoomId').value = '';
@@ -699,7 +699,7 @@
       const existingNotice = document.getElementById('existingSlipNotice');
       if (data.payment_slip_url) {
         existingNotice.style.display = 'block';
-        existingNotice.innerHTML = `✓ ส่งสลิปแล้ว (<a href="${escapeHtml(data.payment_slip_url)}" target="_blank" rel="noopener" style="color: var(--primary); font-weight: 700;">ดูสลิปเดิม</a>) — สามารถอัปโหลดใหม่เพื่อแทนที่ได้`;
+        existingNotice.innerHTML = `✓ Slip uploaded (<a href="${escapeHtml(data.payment_slip_url)}" target="_blank" rel="noopener" style="color: var(--primary); font-weight: 700;">View Current Slip</a>) — upload a new image to replace`;
       } else {
         existingNotice.style.display = 'none';
         existingNotice.textContent = '';
@@ -707,9 +707,9 @@
 
       const confirmBtn = document.getElementById('confirmPaidBtn');
       if (currentUser && (currentUser.role === 'Admin' || currentUser.role === 'Developer')) {
-        confirmBtn.textContent = '✅ อนุมัติการชำระเงินทันที (Staff Override)';
+        confirmBtn.textContent = '✅ Approve Payment Immediately (Staff Override)';
       } else {
-        confirmBtn.textContent = '✅ ส่งสลิปและแจ้งชำระเงิน';
+        confirmBtn.textContent = '✅ Submit Transfer Slip';
       }
 
       document.getElementById('paymentModal').style.display = 'flex';
@@ -744,7 +744,7 @@
     const btn = document.getElementById('confirmPaidBtn');
     const prevLabel = btn.textContent;
     btn.disabled = true;
-    btn.textContent = 'กำลังส่งข้อมูลการชำระเงิน...';
+    btn.textContent = 'Submitting Payment...';
 
     try {
       const res = await apiFetch('/api/payments/confirm', {
@@ -758,8 +758,9 @@
       }
 
       closePaymentModal();
-      showToast(data.message || `✅ ส่งข้อมูลชำระเงินสำหรับ Booking #${bookingId} เรียบร้อยแล้ว`);
-      await Promise.all([filterRooms(), loadBookingsAndTimeline(true)]);
+      showToast(data.message || `✅ Payment slip submitted for Booking #${bookingId}`);
+      await loadBookingsAndTimeline(true);
+      await filterRooms();
     } catch (err) {
       if (err.message !== 'Unauthorized') {
         alert('Error confirming payment: ' + err.message);
@@ -792,7 +793,7 @@
     if (petIds.length > maxCapacity) {
       alert(
         selectedRoomIsAddon
-          ? `ห้องนี้เหลือที่ว่างรับสัตว์เลี้ยงเพิ่มได้อีก ${maxCapacity} ตัว (จากความจุสูงสุด ${selectedRoomMaxCapacity} ตัว) กรุณาเลือกสัตว์เลี้ยงไม่เกินจำนวนที่เหลือครับ`
+          ? `This suite has ${maxCapacity} remaining pet slot(s) out of ${selectedRoomMaxCapacity} for these dates. Please select at most ${maxCapacity} pet(s).`
           : `Selected suite accommodates at most ${maxCapacity} pet(s). Please select fewer pets or choose a larger suite.`
       );
       return;
@@ -886,12 +887,12 @@
             const petNames = (b.pets || []).map((p) => p.name).join(' & ') || 'Pets';
             const isPendingVerify = b.payment_status === 'Pending_Verification';
             const payBadge = isPendingVerify
-              ? `<span class="tag" style="background: #FEF3C7; color: #92400E; margin-top: 2px;">⏳ รอเจ้าหน้าที่ตรวจสลิป</span>`
+              ? `<span class="tag" style="background: #FEF3C7; color: #92400E; margin-top: 2px;">⏳ Pending Staff Slip Verification</span>`
               : '';
             const slipLink = b.payment_slip_url
-              ? ` • <a href="${escapeHtml(b.payment_slip_url)}" target="_blank" rel="noopener" style="color: var(--primary); font-weight: 600;">ดูสลิป</a>`
+              ? ` • <a href="${escapeHtml(b.payment_slip_url)}" target="_blank" rel="noopener" style="color: var(--primary); font-weight: 600;">View Slip</a>`
               : '';
-            const payBtnLabel = isPendingVerify ? '🧾 อัปเดตสลิป' : '💳 Pay QR';
+            const payBtnLabel = isPendingVerify ? '🧾 Update Slip' : '💳 Pay QR';
 
             return `
               <div class="realtime-highlight" style="display: flex; justify-content: space-between; align-items: center; gap: 8px; padding: 8px 10px; margin-bottom: 8px; background: #F8FAFC; border: 1px solid var(--border); border-radius: 8px; font-size: 0.82rem;">

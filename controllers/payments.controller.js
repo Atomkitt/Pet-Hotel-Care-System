@@ -86,7 +86,7 @@ async function confirmPayment(req, res) {
     try {
       if (!req.file) {
         return res.status(400).json({
-          error: 'กรุณาแนบรูปสลิปการโอนเงิน (JPG, PNG, WEBP) เพื่อแจ้งชำระเงินให้เจ้าหน้าที่ตรวจสอบ (Customers cannot self-approve reservations without uploading a transfer slip).'
+          error: 'Please upload a valid transfer slip image (JPG, PNG, WEBP) for staff payment verification.'
         });
       }
 
@@ -136,7 +136,7 @@ async function confirmPayment(req, res) {
       );
 
       return res.json({
-        message: `ส่งสลิปโอนเงินสำหรับ Booking #${bookingId} เรียบร้อยแล้ว! กรุณารอเจ้าหน้าที่ตรวจสอบและอนุมัติเข้าพัก`,
+        message: `Payment slip submitted for Booking #${bookingId}! Please await staff verification and check-in approval.`,
         booking_id: bookingId,
         booking_status: 'Pending',
         payment_status: 'Pending_Verification',

@@ -152,10 +152,10 @@
           ? `
             <img src="${escapeHtml(pet.vaccine_card_url)}" alt="Vaccine Certificate for ${escapeHtml(pet.name)}" class="vaccine-preview-img">
             <div style="margin-top: 6px; text-align: right;">
-              <a href="${escapeHtml(pet.vaccine_card_url)}" target="_blank" rel="noopener" style="font-size: 0.78rem; color: var(--primary); font-weight: 600;">🔍 เปิดดูภาพขนาดเต็ม</a>
+              <a href="${escapeHtml(pet.vaccine_card_url)}" target="_blank" rel="noopener" style="font-size: 0.78rem; color: var(--primary); font-weight: 600;">🔍 Open Full Image</a>
             </div>
           `
-          : `<div style="margin-top: 8px; padding: 10px; background: #FEF3C7; color: #92400E; border-radius: 6px; font-size: 0.8rem;">⚠️ ยังไม่มีไฟล์สมุดวัคซีนในระบบสำหรับ ${escapeHtml(pet.name)}</div>`;
+          : `<div style="margin-top: 8px; padding: 10px; background: #FEF3C7; color: #92400E; border-radius: 6px; font-size: 0.8rem;">⚠️ No vaccine certificate uploaded for ${escapeHtml(pet.name)}</div>`;
 
         return `
           <div class="vaccine-card-item">
@@ -178,7 +178,7 @@
     if (!booking) return;
 
     document.getElementById('vaccineModalTitle').textContent =
-      `📋 สมุดวัคซีน — Room #${booking.room_number} (${booking.owner_name})`;
+      `📋 Vaccine Certificate — Room #${booking.room_number} (${booking.owner_name})`;
 
     document.getElementById('vaccineModalBody').innerHTML = renderVaccinePetCards(booking.pets || []);
     document.getElementById('vaccineModal').style.display = 'flex';
@@ -189,7 +189,7 @@
     if (!room || !room.active_stay) return;
 
     document.getElementById('vaccineModalTitle').textContent =
-      `📋 สมุดวัคซีน — Room #${room.room_number} (${room.active_stay.owner_name})`;
+      `📋 Vaccine Certificate — Room #${room.room_number} (${room.active_stay.owner_name})`;
 
     document.getElementById('vaccineModalBody').innerHTML = renderVaccinePetCards(room.active_stay.pets || []);
     document.getElementById('vaccineModal').style.display = 'flex';
@@ -200,20 +200,20 @@
     if (!booking || !booking.payment_slip_url) return;
 
     document.getElementById('vaccineModalTitle').textContent =
-      `🧾 สลิปการโอนเงิน — Booking #${booking.booking_id} (Room #${booking.room_number})`;
+      `🧾 Transfer Slip — Booking #${booking.booking_id} (Room #${booking.room_number})`;
 
     document.getElementById('vaccineModalBody').innerHTML = `
       <div class="vaccine-card-item">
         <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 6px;">
           <div>
-            <strong>ลูกค้า:</strong> ${escapeHtml(booking.owner_name)}<br>
-            <span style="font-size: 0.8rem; color: var(--text-muted);">ยอดที่ต้องชำระ: <strong>${Number(booking.total_price).toLocaleString()} THB</strong></span>
+            <strong>Customer:</strong> ${escapeHtml(booking.owner_name)}<br>
+            <span style="font-size: 0.8rem; color: var(--text-muted);">Amount Due: <strong>${Number(booking.total_price).toLocaleString()} THB</strong></span>
           </div>
           <span class="tag" style="background: #FEF3C7; color: #92400E; margin-top: 0;">${escapeHtml(booking.payment_status)}</span>
         </div>
         <img src="${escapeHtml(booking.payment_slip_url)}" alt="Payment Slip for Booking #${Number(booking.booking_id)}" class="vaccine-preview-img">
         <div style="margin-top: 6px; text-align: right;">
-          <a href="${escapeHtml(booking.payment_slip_url)}" target="_blank" rel="noopener" style="font-size: 0.78rem; color: var(--primary); font-weight: 600;">🔍 เปิดดูภาพสลิปขนาดเต็ม</a>
+          <a href="${escapeHtml(booking.payment_slip_url)}" target="_blank" rel="noopener" style="font-size: 0.78rem; color: var(--primary); font-weight: 600;">🔍 Open Full Slip Image</a>
         </div>
       </div>
     `;
@@ -264,7 +264,7 @@
                   <span>Room ${escapeHtml(room.room_number)} (${escapeHtml(tier)})</span>
                   <span class="room-status-tag">Cleaning</span>
                 </div>
-                <div>Sanitization in progress (Max ${maxCap} ตัว)</div>
+                <div>Sanitization in progress (Max ${maxCap} pets)</div>
                 <div style="display: flex; justify-content: space-between; align-items: center; font-size: 0.75rem;">
                   <span>Base: ${Number(room.base_price_per_night).toLocaleString()} THB</span>
                   <button type="button" data-action="toggle-room" data-room-id="${roomId}" data-next-status="Available" style="padding: 2px 8px; font-size: 0.7rem; background: rgba(255,255,255,0.25); color: #FFF; border-radius: 4px;">Set Available</button>
@@ -282,18 +282,18 @@
                 : 'Checked-in Guest';
             const dueOut = stay ? formatShortDate(stay.check_out_date) : 'Active';
             const vaccineQuickBtn = stay
-              ? `<button type="button" data-action="view-room-vaccine" data-room-id="${roomId}" style="padding: 2px 7px; font-size: 0.68rem; background: rgba(255,255,255,0.25); color: #FFF; border-radius: 4px;">📋 สมุดวัคซีน</button>`
+              ? `<button type="button" data-action="view-room-vaccine" data-room-id="${roomId}" style="padding: 2px 7px; font-size: 0.68rem; background: rgba(255,255,255,0.25); color: #FFF; border-radius: 4px;">📋 Vaccine</button>`
               : '';
 
             return `
               <div class="room-card room-occupied realtime-highlight">
                 <div class="room-header">
                   <span>Room ${escapeHtml(room.room_number)} (${escapeHtml(tier)})</span>
-                  <span class="room-status-tag">Occupied (เต็ม ${occupiedCount}/${maxCap})</span>
+                  <span class="room-status-tag">Occupied (Full ${occupiedCount}/${maxCap})</span>
                 </div>
                 <div>
                   Pets: <strong>${petNames}</strong>
-                  <div style="font-size: 0.74rem; opacity: 0.92;">เหลือรับเพิ่มได้: 0/${maxCap} ตัว</div>
+                  <div style="font-size: 0.74rem; opacity: 0.92;">Slots Left: 0/${maxCap} pets</div>
                 </div>
                 <div style="display: flex; justify-content: space-between; align-items: center; font-size: 0.75rem;">
                   <span>Due Checkout: ${escapeHtml(dueOut)}</span>
@@ -314,15 +314,15 @@
               <div class="room-card room-available realtime-highlight">
                 <div class="room-header">
                   <span>Room ${escapeHtml(room.room_number)} (${escapeHtml(tier)})</span>
-                  <span class="room-status-tag">Available (เหลือ ${remainingCount}/${maxCap})</span>
+                  <span class="room-status-tag">Available (${remainingCount}/${maxCap} left)</span>
                 </div>
                 <div>
                   Pets: <strong>${petNames}</strong>
-                  <div style="font-size: 0.74rem; opacity: 0.95;">พักอยู่ ${occupiedCount}/${maxCap} • ว่างเพิ่มได้ ${remainingCount} ตัว (เจ้าของเดิม)</div>
+                  <div style="font-size: 0.74rem; opacity: 0.95;">In-Room: ${occupiedCount}/${maxCap} • ${remainingCount} slot${remainingCount > 1 ? 's' : ''} left (Same Owner)</div>
                 </div>
                 <div style="display: flex; justify-content: space-between; align-items: center; font-size: 0.75rem;">
                   <span>Due Checkout: ${escapeHtml(dueOut)}</span>
-                  <button type="button" data-action="view-room-vaccine" data-room-id="${roomId}" style="padding: 2px 7px; font-size: 0.68rem; background: rgba(0,0,0,0.2); color: #FFF; border-radius: 4px;">📋 สมุดวัคซีน</button>
+                  <button type="button" data-action="view-room-vaccine" data-room-id="${roomId}" style="padding: 2px 7px; font-size: 0.68rem; background: rgba(0,0,0,0.2); color: #FFF; border-radius: 4px;">📋 Vaccine</button>
                 </div>
               </div>
             `;
@@ -332,9 +332,9 @@
             <div class="room-card room-available realtime-highlight">
               <div class="room-header">
                 <span>Room ${escapeHtml(room.room_number)} (${escapeHtml(tier)})</span>
-                <span class="room-status-tag">Available (ว่าง ${maxCap}/${maxCap})</span>
+                <span class="room-status-tag">Available (${maxCap}/${maxCap} open)</span>
               </div>
-              <div>Ready for Guest (รับได้ ${maxCap} ตัว)</div>
+              <div>Ready for Guest (${maxCap} pet${maxCap > 1 ? 's' : ''} left)</div>
               <div style="display: flex; justify-content: space-between; align-items: center; font-size: 0.75rem;">
                 <span>Base: ${Number(room.base_price_per_night).toLocaleString()} THB/night</span>
                 <button type="button" data-action="toggle-room" data-room-id="${roomId}" data-next-status="Maintenance" style="padding: 2px 8px; font-size: 0.7rem; background: rgba(0,0,0,0.18); color: #FFF; border-radius: 4px;">Cleaning</button>
@@ -461,13 +461,13 @@
 
           const hasAnyCert = (b.pets || []).some((p) => Boolean(p.vaccine_card_url));
           const slipBtnHtml = b.payment_slip_url
-            ? `<button type="button" class="slip-btn" data-action="view-slip" data-booking-id="${bId}">🧾 ดูสลิป ✓</button>`
+            ? `<button type="button" class="slip-btn" data-action="view-slip" data-booking-id="${bId}">🧾 View Slip ✓</button>`
             : '';
 
           const docBtnsHtml = `
             <div style="margin-top: 4px; display: flex; gap: 4px; flex-wrap: wrap;">
               <button type="button" class="vaccine-btn" data-action="view-vaccine" data-booking-id="${bId}">
-                📋 สมุดวัคซีน${hasAnyCert ? ' ✓' : ''}
+                📋 Vaccine${hasAnyCert ? ' ✓' : ''}
               </button>
               ${slipBtnHtml}
             </div>
