@@ -8,7 +8,7 @@ const { emitEvent } = require('../socket');
 const { PRIVATE_SLIP_DIR, removePrivateSlipFile } = require('../middleware/upload');
 const { sendServerError } = require('../middleware/security');
 
-const DEFAULT_PROMPTPAY_ID = process.env.PROMPTPAY_ID || '081-234-5678';
+const DEFAULT_PROMPTPAY_ID = process.env.PROMPTPAY_ID || '061-852-5229';
 
 // POST /api/payments/generate-qr
 async function generatePromptPayQR(req, res) {
