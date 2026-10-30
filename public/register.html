@@ -1,0 +1,109 @@
+<!-- public/register.html -->
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>PawStay - Register Pet Owner</title>
+  <link rel="stylesheet" href="style.css">
+  <style>
+    .auth-wrapper {
+      min-height: calc(100vh - 80px);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      padding: 24px 16px;
+    }
+    .auth-card {
+      width: 100%;
+      max-width: 460px;
+      margin-bottom: 0;
+    }
+    .auth-subtitle {
+      font-size: 0.9rem;
+      color: var(--text-muted);
+      margin-top: -10px;
+      margin-bottom: 20px;
+    }
+    .auth-msg {
+      display: none;
+      padding: 10px 14px;
+      border-radius: 8px;
+      font-size: 0.85rem;
+      font-weight: 600;
+      margin-bottom: 16px;
+    }
+    .auth-msg.error {
+      display: block;
+      background: #FEE2E2;
+      color: #991B1B;
+      border: 1px solid #FCA5A5;
+    }
+    .auth-footer {
+      text-align: center;
+      margin-top: 18px;
+      font-size: 0.88rem;
+      color: var(--text-muted);
+    }
+    .auth-footer a {
+      color: var(--primary);
+      font-weight: 600;
+      text-decoration: none;
+    }
+    .auth-footer a:hover {
+      text-decoration: underline;
+    }
+  </style>
+</head>
+<body>
+
+  <header>
+    <div class="brand">🐾 PawStay Pet Hotel</div>
+    <div class="nav-links">
+      <a href="login.html">Sign In</a>
+      <a href="register.html" class="active">Create Account</a>
+    </div>
+  </header>
+
+  <div class="auth-wrapper">
+    <div class="card auth-card">
+      <h2 style="justify-content: flex-start; gap: 8px;">🐶 Create Pet Owner Account</h2>
+      <p class="auth-subtitle">Register to manage your pet profiles, book suites, and follow live care logs.</p>
+
+      <div id="registerError" class="auth-msg"></div>
+
+      <form id="registerForm">
+        <label for="regName" style="font-weight: 600; font-size: 0.88rem;">Full Name</label>
+        <input type="text" id="regName" maxlength="100" placeholder="e.g. Kittiphat Khumsawad" autocomplete="name" required>
+
+        <label for="regEmail" style="font-weight: 600; font-size: 0.88rem;">Email Address</label>
+        <input type="email" id="regEmail" maxlength="100" placeholder="you@example.com" autocomplete="email" required>
+
+        <label for="regPhone" style="font-weight: 600; font-size: 0.88rem;">Phone Number</label>
+        <input type="tel" id="regPhone" maxlength="20" placeholder="e.g. 081-234-5678" autocomplete="tel" required>
+
+        <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 12px;">
+          <div>
+            <label for="regPassword" style="font-weight: 600; font-size: 0.88rem;">Password</label>
+            <input type="password" id="regPassword" placeholder="Min 8 chars" minlength="8" maxlength="72" autocomplete="new-password" required>
+          </div>
+          <div>
+            <label for="regConfirm" style="font-weight: 600; font-size: 0.88rem;">Confirm Password</label>
+            <input type="password" id="regConfirm" placeholder="Repeat password" minlength="8" maxlength="72" autocomplete="new-password" required>
+          </div>
+        </div>
+
+        <button type="submit" id="regSubmitBtn" class="btn-primary" style="width: 100%; margin-top: 6px;">
+          Create Account
+        </button>
+      </form>
+
+      <div class="auth-footer">
+        Already have an account? <a href="login.html">Back to Sign In</a>
+      </div>
+    </div>
+  </div>
+
+  <script src="js/register.js"></script>
+</body>
+</html>

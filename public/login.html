@@ -1,0 +1,144 @@
+<!-- public/login.html -->
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>PawStay - Sign In</title>
+  <link rel="stylesheet" href="style.css">
+  <style>
+    .auth-wrapper {
+      min-height: calc(100vh - 80px);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      padding: 24px 16px;
+    }
+    .auth-card {
+      width: 100%;
+      max-width: 440px;
+      margin-bottom: 0;
+    }
+    .auth-subtitle {
+      font-size: 0.9rem;
+      color: var(--text-muted);
+      margin-top: -10px;
+      margin-bottom: 20px;
+    }
+    .auth-msg {
+      display: none;
+      padding: 10px 14px;
+      border-radius: 8px;
+      font-size: 0.85rem;
+      font-weight: 600;
+      margin-bottom: 16px;
+    }
+    .auth-msg.error {
+      display: block;
+      background: #FEE2E2;
+      color: #991B1B;
+      border: 1px solid #FCA5A5;
+    }
+    .auth-msg.info {
+      display: block;
+      background: #FEF3C7;
+      color: #92400E;
+      border: 1px solid #FDE68A;
+    }
+    .demo-box {
+      margin-top: 20px;
+      padding-top: 16px;
+      border-top: 1px dashed var(--border);
+    }
+    .demo-pills {
+      display: grid;
+      grid-template-columns: repeat(3, 1fr);
+      gap: 8px;
+      margin-top: 8px;
+    }
+    .demo-btn {
+      background: #F1F5F9;
+      color: var(--text-main);
+      border: 1px solid var(--border);
+      padding: 8px 6px;
+      font-size: 0.75rem;
+      border-radius: 8px;
+      text-align: center;
+    }
+    .demo-btn:hover {
+      border-color: var(--primary);
+      background: #F0FDF4;
+      color: var(--primary);
+    }
+    .auth-footer {
+      text-align: center;
+      margin-top: 18px;
+      font-size: 0.88rem;
+      color: var(--text-muted);
+    }
+    .auth-footer a {
+      color: var(--primary);
+      font-weight: 600;
+      text-decoration: none;
+    }
+    .auth-footer a:hover {
+      text-decoration: underline;
+    }
+  </style>
+</head>
+<body>
+
+  <header>
+    <div class="brand">🐾 PawStay Pet Hotel</div>
+    <div class="nav-links">
+      <a href="login.html" class="active">Sign In</a>
+      <a href="register.html">Create Account</a>
+    </div>
+  </header>
+
+  <div class="auth-wrapper">
+    <div class="card auth-card">
+      <h2 style="justify-content: flex-start; gap: 8px;">🔐 Welcome Back</h2>
+      <p class="auth-subtitle">Sign in to manage pet stays, care timelines, and operations.</p>
+
+      <div id="authNotice" class="auth-msg"></div>
+
+      <form id="loginForm">
+        <label for="loginEmail" style="font-weight: 600; font-size: 0.88rem;">Email Address</label>
+        <input type="email" id="loginEmail" maxlength="100" placeholder="you@example.com" autocomplete="email" required>
+
+        <label for="loginPassword" style="font-weight: 600; font-size: 0.88rem;">Password</label>
+        <input type="password" id="loginPassword" maxlength="72" placeholder="••••••••" autocomplete="current-password" required>
+
+        <button type="submit" id="loginSubmitBtn" class="btn-primary" style="width: 100%; margin-top: 4px;">
+          Sign In
+        </button>
+      </form>
+
+      <div class="auth-footer">
+        New pet owner? <a href="register.html">Register a Pet Owner Account</a>
+      </div>
+
+      <!-- Quick Demo Role Switcher for Academic Lab Grading (3-Tier RBAC) -->
+      <div class="demo-box" id="demoCredentialsBox">
+        <div style="font-size: 0.78rem; color: var(--text-muted); font-weight: 600; text-align: center;">
+          Quick Fill Demo Credentials (Password: <code>test1234</code>)
+        </div>
+        <div class="demo-pills">
+          <button type="button" class="demo-btn" data-demo-email="atomkittiphat@gmail.com" data-demo-pass="test1234">
+            👤 Owner<br><small style="color:var(--text-muted)">User</small>
+          </button>
+          <button type="button" class="demo-btn" data-demo-email="staff01@pawstay.local" data-demo-pass="test1234">
+            👨‍💼 Staff<br><small style="color:var(--accent)">Admin</small>
+          </button>
+          <button type="button" class="demo-btn" data-demo-email="nattapat@pawstay.dev" data-demo-pass="test1234">
+            🛠️ Dev<br><small style="color:#6366F1">Developer</small>
+          </button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <script src="js/login.js"></script>
+</body>
+</html>

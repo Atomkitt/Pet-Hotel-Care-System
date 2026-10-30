@@ -1,0 +1,303 @@
+<!-- public/index.html -->
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>PawStay - Customer Portal</title>
+  <link rel="stylesheet" href="style.css">
+  <style>
+    .room-selector-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
+      gap: 12px;
+      margin: 14px 0 20px 0;
+    }
+    .room-select-card {
+      border: 2px solid var(--border);
+      border-radius: 10px;
+      padding: 12px;
+      background: #FFFFFF;
+      cursor: pointer;
+      transition: all 0.2s ease;
+      position: relative;
+    }
+    .room-select-card:hover:not(.disabled) {
+      border-color: var(--primary);
+      transform: translateY(-2px);
+      box-shadow: 0 4px 10px rgba(0,0,0,0.06);
+    }
+    .room-select-card.selected {
+      border-color: var(--primary);
+      background-color: #F0FDF4;
+      box-shadow: 0 0 0 2px var(--primary);
+    }
+    .room-select-card.disabled {
+      background-color: #F1F5F9;
+      opacity: 0.65;
+      cursor: not-allowed;
+      border-color: #E2E8F0;
+    }
+    .badge-status {
+      display: inline-block;
+      font-size: 0.7rem;
+      font-weight: 700;
+      padding: 2px 6px;
+      border-radius: 4px;
+      margin-top: 6px;
+    }
+    .badge-available { background: #DCFCE7; color: #166534; }
+    .badge-occupied { background: #FEE2E2; color: #991B1B; }
+    .badge-maintenance { background: #E2E8F0; color: #475569; }
+    .tag-high-energy { background: #E0F2FE; color: #0369A1; }
+    .role-badge.dev { background: #6366F1; }
+
+    .pet-avatar img {
+      width: 100%;
+      height: 100%;
+      object-fit: cover;
+      border-radius: 50%;
+    }
+
+    @keyframes fadeSlideIn {
+      from { opacity: 0; transform: translateY(-6px); }
+      to { opacity: 1; transform: translateY(0); }
+    }
+    .realtime-highlight {
+      animation: fadeSlideIn 0.35s ease-out;
+    }
+
+    .rt-toast {
+      position: fixed;
+      bottom: 24px;
+      right: 24px;
+      background: #0F172A;
+      color: #FFFFFF;
+      padding: 12px 18px;
+      border-radius: 10px;
+      font-size: 0.85rem;
+      font-weight: 600;
+      box-shadow: 0 10px 25px rgba(0,0,0,0.2);
+      z-index: 2000;
+      display: none;
+      border-left: 4px solid var(--primary);
+    }
+
+    .promptpay-banner {
+      background: #113566;
+      color: #FFFFFF;
+      text-align: center;
+      padding: 10px;
+      border-radius: 8px 8px 0 0;
+      font-weight: 700;
+      letter-spacing: 0.5px;
+      font-size: 0.95rem;
+    }
+    .qr-frame {
+      border: 2px solid #E2E8F0;
+      border-radius: 0 0 8px 8px;
+      padding: 16px;
+      text-align: center;
+      background: #FFFFFF;
+      margin-bottom: 12px;
+    }
+  </style>
+</head>
+<body>
+
+  <!-- Navigation & Authentication Header -->
+  <header>
+    <div class="brand">🐾 PawStay Pet Hotel</div>
+    <div class="nav-links">
+      <a href="index.html" class="active">Owner Portal</a>
+      <a href="admin.html" id="navAdminLink" style="display: none;">Staff Dashboard</a>
+      <a href="dev.html" id="navDevLink" style="display: none;">Developer Console</a>
+      <div class="user-profile-badge">
+        <span id="currentUserName">👤 Loading...</span>
+        <span class="role-badge" id="currentUserRole">User</span>
+      </div>
+      <button type="button" id="logoutBtn" class="btn-danger btn-sm">Logout</button>
+    </div>
+  </header>
+
+  <div class="container" id="appContainer" style="visibility: hidden;">
+    
+    <!-- Section 1: Pet Profile Manager (CRUD + Photo & Vaccine Upload) -->
+    <div class="card">
+      <h2>
+        My Registered Pets
+        <button type="button" id="openPetModalBtn" class="btn-primary btn-sm">+ Add New Pet</button>
+      </h2>
+      <div class="pet-grid" id="petList">
+        <!-- Populated dynamically via GET /api/pets -->
+      </div>
+    </div>
+
+    <!-- Section 2: Real-time Room Availability & Booking -->
+    <div class="grid-2">
+      
+      <div class="card">
+        <h3>Book a Suite</h3>
+        <form id="bookingForm">
+          
+          <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 12px;">
+            <div>
+              <label for="checkIn">Check-in Date</label>
+              <input type="date" id="checkIn" required>
+            </div>
+            <div>
+              <label for="checkOut">Check-out Date</label>
+              <input type="date" id="checkOut" required>
+            </div>
+          </div>
+
+          <label style="margin-top: 8px; display: block; font-weight: 600;">
+            Select an Available Room
+          </label>
+          <div class="room-selector-grid" id="roomGrid">
+            <!-- Populated dynamically via GET /api/rooms & GET /api/rooms/available -->
+          </div>
+
+          <input type="hidden" id="selectedRoomId" value="">
+          <input type="hidden" id="selectedRoomRate" value="600">
+          <input type="hidden" id="selectedRoomName" value="Room 103 (Standard)">
+          <input type="hidden" id="selectedRoomCapacity" value="2">
+
+          <div style="background: #F8FAFC; border: 1px solid var(--border); padding: 10px; border-radius: 8px; margin-bottom: 14px;">
+            Selected Suite: <strong id="selectedRoomDisplay" style="color: var(--primary);">Room 103 (Standard)</strong>
+          </div>
+
+          <label>Select Pets Sharing this Suite (Multi-Pet Allocation)</label>
+          <div id="petCheckboxList" style="margin: 8px 0 14px 0; display: flex; gap: 16px; flex-wrap: wrap;">
+            <!-- Populated dynamically from owner's registered pets -->
+          </div>
+
+          <label>Add-on Services</label>
+          <div style="margin-bottom: 16px;">
+            <label><input type="checkbox" id="groomingToggle" style="width: auto; margin-right: 6px;"> Full Grooming &amp; Spa (Weight-tiered)</label>
+          </div>
+
+          <div style="background: #F1F5F9; padding: 12px; border-radius: 8px; margin-bottom: 16px;">
+            <strong>Estimated Total: <span id="pricePreview">1,800</span> THB</strong>
+            <div id="priceNote" style="font-size: 0.75rem; color: var(--text-muted)">*Includes 3 nights stay + extra pet fee + grooming tier</div>
+          </div>
+
+          <button type="submit" id="bookingSubmitBtn" class="btn-primary" style="width: 100%;">Confirm Reservation &amp; Pay via PromptPay</button>
+        </form>
+      </div>
+
+      <!-- Section 3: Booking History & Daily Activity Timeline -->
+      <div class="card">
+        <h3>Live Care Timeline &amp; Active Stays</h3>
+        <div id="activeStayBanner" style="margin-bottom: 16px; padding: 10px; background: #FEF3C7; border-radius: 8px; border: 1px solid #FDE68A;">
+          <strong>Loading active stays...</strong>
+        </div>
+
+        <div id="pendingStaysList" style="margin-bottom: 14px;"></div>
+        
+        <ul class="timeline" id="careTimeline">
+          <!-- Populated dynamically via GET /api/logs/:booking_id -->
+        </ul>
+      </div>
+
+    </div>
+  </div>
+
+  <!-- Pet Registration & Edit Modal (Multipart Upload Support) -->
+  <div class="modal" id="petModal">
+    <div class="modal-content" style="max-height: 92vh; overflow-y: auto;">
+      <h3 id="petModalTitle">Add New Pet Profile</h3>
+      <form id="petForm" enctype="multipart/form-data">
+        <input type="hidden" id="editingPetId" value="">
+
+        <label for="modalPetName">Pet Name</label>
+        <input type="text" id="modalPetName" maxlength="50" placeholder="e.g. Buster" required>
+
+        <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 12px;">
+          <div>
+            <label for="modalSpecies">Species</label>
+            <select id="modalSpecies">
+              <option value="Dog">Dog</option>
+              <option value="Cat">Cat</option>
+            </select>
+          </div>
+          <div>
+            <label for="modalWeight">Weight (kg)</label>
+            <input type="number" step="0.01" min="0.01" max="999.99" id="modalWeight" placeholder="e.g. 12.50" required>
+          </div>
+        </div>
+
+        <label for="modalBreed">Breed</label>
+        <input type="text" id="modalBreed" maxlength="50" placeholder="e.g. Corgi">
+
+        <label for="modalBehavior">Behavior Flag</label>
+        <select id="modalBehavior">
+          <option value="Friendly">Friendly</option>
+          <option value="Aggressive">Aggressive</option>
+          <option value="Anxious">Anxious</option>
+          <option value="High-Energy">High-Energy</option>
+        </select>
+
+        <label for="modalPetPhoto">Pet Avatar Photo <small style="color: var(--text-muted);">(JPG, PNG, WEBP • Max 5MB)</small></label>
+        <input type="file" id="modalPetPhoto" accept=".jpg,.jpeg,.png,.webp,image/jpeg,image/png,image/webp" style="padding: 7px;">
+
+        <label for="modalVaccineCard">Vaccine Certificate (สมุดวัคซีน) <small style="color: var(--text-muted);">(JPG, PNG, WEBP • Max 5MB)</small></label>
+        <input type="file" id="modalVaccineCard" accept=".jpg,.jpeg,.png,.webp,image/jpeg,image/png,image/webp" style="padding: 7px;">
+
+        <label for="modalMedicalNotes">Medical Notes</label>
+        <textarea id="modalMedicalNotes" rows="2" maxlength="2000" placeholder="Optional allergies, vaccination notes, or special care..."></textarea>
+
+        <div style="display: flex; justify-content: flex-end; gap: 10px; margin-top: 8px;">
+          <button type="button" id="closePetModalBtn" class="btn-danger btn-sm">Cancel</button>
+          <button type="submit" id="savePetBtn" class="btn-primary btn-sm">Save Pet</button>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <!-- PromptPay QR Code Payment & Transfer Slip Modal -->
+  <div class="modal" id="paymentModal">
+    <div class="modal-content" style="max-width: 430px; max-height: 92vh; overflow-y: auto;">
+      <h3 style="margin-bottom: 12px;">💳 ชำระเงินผ่าน PromptPay QR</h3>
+
+      <div class="promptpay-banner">🇹🇭 THAI QR PAYMENT • PROMPTPAY</div>
+      <div class="qr-frame">
+        <img id="qrCodeImg" src="" alt="PromptPay QR Code" style="width: 210px; height: 210px; display: block; margin: 0 auto 8px auto;">
+        <div style="font-size: 0.8rem; color: var(--text-muted);">
+          PromptPay ID: <strong id="qrPromptPayId">-</strong>
+        </div>
+        <div style="font-size: 0.85rem; margin-top: 4px;">
+          Booking <strong id="qrBookingLabel">#-</strong> • Room <strong id="qrRoomLabel">#-</strong>
+        </div>
+        <div style="font-size: 1.25rem; font-weight: 800; color: var(--primary); margin-top: 6px;">
+          ยอดชำระสุทธิ: <span id="qrAmountDisplay">0</span> THB
+        </div>
+      </div>
+
+      <input type="hidden" id="activePaymentBookingId" value="">
+
+      <div id="slipUploadSection" style="margin-bottom: 12px;">
+        <label for="paymentSlipInput" style="font-size: 0.84rem; font-weight: 600;">
+          🧾 แนบสลิปโอนเงิน (Transfer Slip) <small style="color: var(--text-muted);">(JPG, PNG, WEBP • Max 5MB)</small>
+        </label>
+        <input type="file" id="paymentSlipInput" accept=".jpg,.jpeg,.png,.webp,image/jpeg,image/png,image/webp" style="padding: 7px; margin-bottom: 4px;">
+        <div id="existingSlipNotice" style="font-size: 0.78rem; color: var(--primary); display: none;"></div>
+      </div>
+
+      <div style="display: flex; flex-direction: column; gap: 8px;">
+        <button type="button" id="confirmPaidBtn" class="btn-primary" style="width: 100%;">
+          ✅ ส่งสลิปและแจ้งชำระเงิน
+        </button>
+        <button type="button" id="closePaymentModalBtn" class="btn-danger btn-sm" style="width: 100%; padding: 9px;">
+          ชำระภายหลัง (Pay Later)
+        </button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Real-Time Notification Toast -->
+  <div id="rtToast" class="rt-toast"></div>
+
+  <script src="/socket.io/socket.io.js"></script>
+  <script src="js/index.js"></script>
+</body>
+</html>

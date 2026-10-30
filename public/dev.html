@@ -1,0 +1,184 @@
+<!-- public/dev.html -->
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>PawStay - Developer Console</title>
+  <link rel="stylesheet" href="style.css">
+  <style>
+    .role-badge.dev { background: #6366F1; }
+    .status-pill {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      font-size: 0.8rem;
+      padding: 3px 10px;
+      border-radius: 9999px;
+      font-weight: 600;
+    }
+    .status-healthy { background: #DCFCE7; color: #166534; }
+    .status-error { background: #FEE2E2; color: #991B1B; }
+    .metric-box {
+      background: #F8FAFC;
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      padding: 16px;
+      text-align: center;
+    }
+    .metric-value {
+      font-size: 1.8rem;
+      font-weight: 700;
+      color: var(--primary);
+    }
+    .metric-label {
+      font-size: 0.75rem;
+      color: var(--text-muted);
+      text-transform: uppercase;
+      font-weight: 600;
+    }
+    .code-output {
+      background: #0F172A;
+      color: #38BDF8;
+      font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+      padding: 14px;
+      border-radius: 8px;
+      font-size: 0.82rem;
+      min-height: 120px;
+      overflow-x: auto;
+      white-space: pre-wrap;
+    }
+  </style>
+</head>
+<body>
+
+  <!-- Navigation Header -->
+  <header>
+    <div class="brand">🐾 PawStay System Console</div>
+    <div class="nav-links">
+      <a href="index.html">Owner Portal</a>
+      <a href="admin.html">Staff Dashboard</a>
+      <a href="dev.html" class="active">Developer Console</a>
+      <div class="user-profile-badge">
+        <span id="currentUserName">🛠️ Loading...</span>
+        <span class="role-badge dev" id="currentUserRole">Developer</span>
+      </div>
+      <button type="button" id="logoutBtn" class="btn-danger btn-sm">Logout</button>
+    </div>
+  </header>
+
+  <div class="container" id="appContainer" style="visibility: hidden;">
+
+    <!-- Top Grid: MySQL Connection Pool Health -->
+    <div class="card">
+      <h2>
+        Database Connection Pool Health
+        <span class="status-pill status-healthy" id="dbHealthPill">● MySQL 8.0 Connected</span>
+      </h2>
+      <div style="display: grid; grid-template-columns: repeat(4, 1fr); gap: 16px; margin-top: 8px;">
+        <div class="metric-box">
+          <div class="metric-value" id="maxPoolSize">10</div>
+          <div class="metric-label">Max Pool Size</div>
+        </div>
+        <div class="metric-box">
+          <div class="metric-value" id="activeConns">0</div>
+          <div class="metric-label">Active Connections</div>
+        </div>
+        <div class="metric-box">
+          <div class="metric-value" id="idleConns">0</div>
+          <div class="metric-label">Idle Connections</div>
+        </div>
+        <div class="metric-box">
+          <div class="metric-value" id="avgLatency">0.0 ms</div>
+          <div class="metric-label">Avg Query Latency</div>
+        </div>
+      </div>
+    </div>
+
+    <div class="grid-2">
+      
+      <!-- Section 1: Role-Based Access Control (RBAC Manager) -->
+      <div class="card">
+        <h3>User Role Management (Access Control)</h3>
+        <p style="font-size: 0.85rem; color: var(--text-muted); margin-bottom: 12px;">
+          Privilege elevation and role delegation for system accounts.
+        </p>
+        <table>
+          <thead>
+            <tr>
+              <th>User</th>
+              <th>Email</th>
+              <th>Role</th>
+              <th>Action</th>
+            </tr>
+          </thead>
+          <tbody id="userTable">
+            <!-- Populated dynamically via GET /api/users -->
+          </tbody>
+        </table>
+      </div>
+
+      <!-- Section 2: Stored Procedure & Trigger Test Workbench -->
+      <div class="card">
+        <h3>Database Routines &amp; Trigger Workbench</h3>
+        <p style="font-size: 0.85rem; color: var(--text-muted); margin-bottom: 12px;">
+          Manual test dispatch for routines required by project criteria.
+        </p>
+        
+        <label for="routineSelect" style="font-size: 0.85rem; font-weight: 600;">Test Routine</label>
+        <select id="routineSelect">
+          <option value="sp_bill">CALL sp_finalize_and_calculate_bill(?)</option>
+          <option value="trg_status">TRIGGER trg_after_booking_status_change (Simulate)</option>
+        </select>
+
+        <div id="spInputs">
+          <label for="testBookingId" style="font-size: 0.85rem; font-weight: 600;">Booking ID Param (p_booking_id)</label>
+          <input type="number" id="testBookingId" value="1" min="1" placeholder="e.g. 1">
+        </div>
+
+        <div id="trgInputs" style="display: none;">
+          <label for="testTriggerStatus" style="font-size: 0.85rem; font-weight: 600;">Target Booking Status</label>
+          <select id="testTriggerStatus">
+            <option value="Confirmed">Confirmed (Locks Room → 'Occupied')</option>
+            <option value="Completed">Completed (Releases Room → 'Available')</option>
+            <option value="Cancelled">Cancelled (Releases Room → 'Available')</option>
+          </select>
+        </div>
+
+        <button type="button" id="executeRoutineBtn" class="btn-primary" style="width: 100%; margin-bottom: 14px;">
+          ⚡ Execute Statement
+        </button>
+
+        <label style="font-size: 0.85rem; font-weight: 600;">MySQL Output Console</label>
+        <div class="code-output" id="sqlConsole">/* Ready to execute routines... */
+mysql> SELECT routine_name, routine_type FROM information_schema.routines WHERE routine_schema = 'pet_hotel';</div>
+      </div>
+
+    </div>
+
+    <!-- Section 3: Live Query Audit Log -->
+    <div class="card">
+      <h3>
+        Live Query Audit Log
+        <button type="button" id="refreshAuditBtn" class="btn-primary btn-sm">↻ Refresh Metrics</button>
+      </h3>
+      <table>
+        <thead>
+          <tr>
+            <th>Timestamp</th>
+            <th>Type</th>
+            <th>Statement / Parameterized Query</th>
+            <th>Latency</th>
+            <th>Status</th>
+          </tr>
+        </thead>
+        <tbody id="auditLogs">
+          <!-- Populated dynamically via GET /api/dev/pool-status -->
+        </tbody>
+      </table>
+    </div>
+
+  </div>
+
+  <script src="js/dev.js"></script>
+</body>
+</html>

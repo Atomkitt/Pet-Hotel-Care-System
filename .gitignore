@@ -1,0 +1,26 @@
+# Dependencies
+node_modules/
+package-lock.json.log
+
+# Environment & Credentials (NEVER commit secrets!)
+.env
+.env.local
+.env.*.local
+
+# Private Uploads & Storage (preserve sample files and folder structure)
+storage/slips/*
+!storage/slips/.gitkeep
+storage/vaccines/*
+!storage/vaccines/sample-*
+!storage/vaccines/.gitkeep
+
+public/uploads/*
+!public/uploads/sample-*
+!public/uploads/.gitkeep
+
+# System & Editor files
+.DS_Store
+Thumbs.db
+*.log
+.vscode/
+.idea/

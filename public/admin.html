@@ -1,0 +1,218 @@
+<!-- public/admin.html -->
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>PawStay - Operations Dashboard</title>
+  <link rel="stylesheet" href="style.css">
+  <style>
+    .role-badge.dev { background: #6366F1; }
+
+    @keyframes fadeSlideIn {
+      from { opacity: 0; transform: translateY(-6px); }
+      to { opacity: 1; transform: translateY(0); }
+    }
+    .realtime-highlight {
+      animation: fadeSlideIn 0.35s ease-out;
+    }
+
+    .rt-toast {
+      position: fixed;
+      bottom: 24px;
+      right: 24px;
+      background: #0F172A;
+      color: #FFFFFF;
+      padding: 12px 18px;
+      border-radius: 10px;
+      font-size: 0.85rem;
+      font-weight: 600;
+      box-shadow: 0 10px 25px rgba(0,0,0,0.2);
+      z-index: 2000;
+      display: none;
+      border-left: 4px solid var(--accent);
+    }
+
+    .vaccine-btn {
+      padding: 3px 8px;
+      font-size: 0.72rem;
+      background: #E0E7FF;
+      color: #3730A3;
+      border-radius: 6px;
+      font-weight: 700;
+    }
+    .vaccine-btn:hover {
+      background: #C7D2FE;
+    }
+    .slip-btn {
+      padding: 3px 8px;
+      font-size: 0.72rem;
+      background: #DCFCE7;
+      color: #166534;
+      border-radius: 6px;
+      font-weight: 700;
+    }
+    .slip-btn:hover {
+      background: #BBF7D0;
+    }
+    .vaccine-card-item {
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      padding: 12px;
+      margin-bottom: 12px;
+      background: #F8FAFC;
+    }
+    .vaccine-preview-img {
+      width: 100%;
+      max-height: 280px;
+      object-fit: contain;
+      border-radius: 8px;
+      border: 1px solid var(--border);
+      background: #FFFFFF;
+      margin-top: 8px;
+    }
+  </style>
+</head>
+<body>
+
+  <!-- Navigation Header -->
+  <header>
+    <div class="brand">🐾 PawStay Admin Operations</div>
+    <div class="nav-links">
+      <a href="index.html">Owner Portal</a>
+      <a href="admin.html" class="active">Staff Dashboard</a>
+      <a href="dev.html" id="navDevLink" style="display: none;">Developer Console</a>
+      <div class="user-profile-badge">
+        <span id="currentUserName">👨‍💼 Loading...</span>
+        <span class="role-badge admin" id="currentUserRole">Administrator</span>
+      </div>
+      <button type="button" id="logoutBtn" class="btn-danger btn-sm">Logout</button>
+    </div>
+  </header>
+
+  <div class="container" id="appContainer" style="visibility: hidden;">
+
+    <!-- Behavioral Safety Alert Banner -->
+    <div class="alert-banner" id="safetyAlertBanner" style="display: none;">
+      <span style="font-size: 1.4rem;">⚠️</span>
+      <div id="safetyAlertContent"></div>
+    </div>
+
+    <!-- Section 1: Room Grid Overview (Visual Floor Plan) -->
+    <div class="card">
+      <h2>Room Grid &amp; Live Occupancy</h2>
+      <div class="room-grid" id="adminRoomGrid">
+        <!-- Populated dynamically via GET /api/rooms -->
+      </div>
+    </div>
+
+    <div class="grid-2">
+      <!-- Section 2: Quick Care Logger Form (Create & Delete Daily Logs per Pet) -->
+      <div class="card">
+        <h3>Quick Care Logger</h3>
+        <form id="careLogForm">
+          <label for="logStay">Select Active Stay</label>
+          <select id="logStay">
+            <!-- Populated dynamically from active Confirmed bookings -->
+          </select>
+
+          <label for="logPet">Select Guest Pet</label>
+          <select id="logPet">
+            <!-- Populated dynamically from selected stay's pets -->
+          </select>
+
+          <label for="logType">Activity Category</label>
+          <select id="logType">
+            <option value="Meal">Meal (Breakfast/Dinner)</option>
+            <option value="Potty">Potty Break</option>
+            <option value="Walk">Exercise / Outdoor Play</option>
+            <option value="Medication">Medication Dispensed</option>
+            <option value="General">General / Grooming Care</option>
+          </select>
+
+          <label for="logDetails">Observations / Notes</label>
+          <textarea id="logDetails" rows="3" maxlength="255" placeholder="e.g. Drank full bowl of water, completed 20-min yard walk..." required></textarea>
+
+          <button type="submit" id="submitCareLogBtn" class="btn-primary" style="width: 100%;">Record Daily Log</button>
+        </form>
+
+        <div style="margin-top: 18px; border-top: 1px solid var(--border); padding-top: 12px;">
+          <div style="font-size: 0.82rem; font-weight: 700; color: var(--text-muted); margin-bottom: 8px;">
+            Recent Care Entries (Selected Stay)
+          </div>
+          <div id="stayLogsFeed" style="max-height: 170px; overflow-y: auto; font-size: 0.82rem;">
+            <!-- Populated dynamically via GET /api/logs/:booking_id -->
+          </div>
+        </div>
+      </div>
+
+      <!-- Section 3: Reservations, Departures & Settlement Summary -->
+      <div class="card">
+        <h3>Departures &amp; Billing Settlement</h3>
+        <table>
+          <thead>
+            <tr>
+              <th>Room</th>
+              <th>Owner</th>
+              <th>Pets, Vaccine &amp; Slip</th>
+              <th>Action</th>
+            </tr>
+          </thead>
+          <tbody id="departuresTableBody">
+            <!-- Populated dynamically via GET /api/bookings -->
+          </tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+
+  <!-- Document Inspection Modal (Vaccine Certificates & Payment Slips) -->
+  <div class="modal" id="vaccineModal">
+    <div class="modal-content" style="max-width: 520px; max-height: 90vh; overflow-y: auto;">
+      <h3 id="vaccineModalTitle">📋 สมุดวัคซีน (Vaccine Certificate)</h3>
+      <div id="vaccineModalBody" style="margin: 14px 0;"></div>
+      <div style="display: flex; justify-content: flex-end;">
+        <button type="button" id="closeVaccineModalBtn" class="btn-primary btn-sm">Close</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Itemized Receipt Preview & Checkout Confirmation Modal -->
+  <div class="modal" id="receiptModal">
+    <div class="modal-content">
+      <h3>Invoice Settlement (sp_finalize_and_calculate_bill)</h3>
+      <div style="margin: 16px 0; font-size: 0.9rem; line-height: 1.8;">
+        <div><strong>Guest:</strong> <span id="billPet"></span></div>
+        <div><strong>Stay Duration:</strong> <span id="billNights"></span> Nights</div>
+        <hr style="border: 0; border-top: 1px dashed var(--border); margin: 8px 0;">
+        <div style="display: flex; justify-content: space-between;">
+          <span>Room Lodging Charge:</span>
+          <span id="billRoomCharge"></span>
+        </div>
+        <div style="display: flex; justify-content: space-between;">
+          <span>Multi-Pet Surcharge:</span>
+          <span id="billMultiPet"></span>
+        </div>
+        <div style="display: flex; justify-content: space-between;">
+          <span>Weight-Tiered Grooming Fee:</span>
+          <span id="billGrooming"></span>
+        </div>
+        <hr style="border: 0; border-top: 1px solid var(--text-main); margin: 8px 0;">
+        <div style="display: flex; justify-content: space-between; font-weight: 700; font-size: 1.1rem;">
+          <span>Total Balance Due:</span>
+          <span id="billTotal" style="color: var(--primary);"></span>
+        </div>
+      </div>
+      <div style="display: flex; justify-content: flex-end; gap: 8px;">
+        <button type="button" id="closeReceiptBtn" class="btn-danger btn-sm">Cancel / Close</button>
+        <button type="button" id="completeCheckoutBtn" class="btn-primary btn-sm">Mark Paid &amp; Release Room</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Real-Time Notification Toast -->
+  <div id="rtToast" class="rt-toast"></div>
+
+  <script src="/socket.io/socket.io.js"></script>
+  <script src="js/admin.js"></script>
+</body>
+</html>
