@@ -46,7 +46,8 @@ async function runMigration() {
     port: Number(process.env.DB_PORT) || 3306,
     user: process.env.DB_USER || 'root',
     password: process.env.DB_PASSWORD || '',
-    database: dbName
+    database: dbName,
+    ssl: process.env.DB_SSL === 'true' ? { rejectUnauthorized: false } : undefined
   });
 
   try {
